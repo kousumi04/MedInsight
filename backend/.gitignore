@@ -1,0 +1,48 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and package artifacts
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+
+# Local databases and generated RAG/search artifacts
+*.db
+*.sqlite
+*.sqlite3
+data/
+storage/
+vector_store/
+chroma/
+faiss_index/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

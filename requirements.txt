@@ -1,0 +1,6 @@
+biopython
+fastapi
+google-generativeai
+python-dotenv
+requests
+uvicorn
