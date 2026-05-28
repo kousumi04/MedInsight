@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.query_engine.userquery import process_user_query
+from backend.rag.database import RagStorageError, refresh_pubmed_collection
 from backend.search.fetch import build_pubmed_query, fetch_pubmed_papers
 
 
 app = FastAPI(title="MedInsight API", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 
 class KeywordRequest(BaseModel):
@@ -46,13 +50,16 @@ class PubMedPaper(BaseModel):
     """Structured PubMed paper metadata."""
 
     pmid: str
+    pmcid: str
     title: str
     abstract: str
+    full_text_paragraphs: list[str]
     authors: list[str]
     journal: str
     publication_date: str
     doi: str
     pubmed_url: str
+    pmc_url: str
     keywords_used: list[str]
 
 
@@ -105,8 +112,15 @@ def search_pubmed_papers(request: PubMedSearchRequest) -> dict[str, object]:
             cleaned_keywords,
             max_results=request.max_results,
         )
+        refresh_pubmed_collection({"papers": papers})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RagStorageError as exc:
+        logger.exception("Failed to refresh temporary RAG collection.")
+        raise HTTPException(
+            status_code=500,
+            detail="PubMed search succeeded, but temporary RAG storage failed.",
+        ) from exc
 
     return {
         "keywords": cleaned_keywords,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import socket
+import xml.etree.ElementTree as ET
 from typing import Any
 
 from config import (
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - only reached before dependency install
 logger = logging.getLogger(__name__)
 
 PUBMED_BASE_URL = "https://pubmed.ncbi.nlm.nih.gov"
+PMC_BASE_URL = "https://pmc.ncbi.nlm.nih.gov/articles"
 DEFAULT_MAX_RESULTS = 10
 EXCLUDED_PUBLICATION_TYPES = {
     "comment",
@@ -120,7 +122,9 @@ def fetch_paper_details(pmids: list[str]) -> list[dict[str, Any]]:
         raise PubMedFetchError("PubMed metadata fetch request failed.") from exc
 
     articles = fetch_result.get("PubmedArticle", [])
-    return [parse_paper_data(article) for article in articles]
+    papers = [parse_paper_data(article) for article in articles]
+    _attach_full_text_paragraphs(papers)
+    return papers
 
 
 def parse_paper_data(article: dict[str, Any]) -> dict[str, Any]:
@@ -138,16 +142,20 @@ def parse_paper_data(article: dict[str, Any]) -> dict[str, Any]:
     journal_title = _stringify(journal.get("Title", ""))
     publication_date = _parse_publication_date(journal.get("JournalIssue", {}))
     doi = _parse_doi(article_data, pubmed_data)
+    pmcid = _parse_pmcid(pubmed_data)
 
     return {
         "pmid": pmid,
+        "pmcid": pmcid,
         "title": title,
         "abstract": abstract,
+        "full_text_paragraphs": [],
         "authors": authors,
         "journal": journal_title,
         "publication_date": publication_date,
         "doi": doi,
         "pubmed_url": f"{PUBMED_BASE_URL}/{pmid}/" if pmid else "",
+        "pmc_url": f"{PMC_BASE_URL}/{pmcid}/" if pmcid else "",
         "keywords_used": [],
         "publication_types": _parse_publication_types(article_data),
     }
@@ -323,6 +331,183 @@ def _parse_doi(article_data: dict[str, Any], pubmed_data: dict[str, Any]) -> str
             return _stringify(electronic_id)
 
     return ""
+
+
+def _parse_pmcid(pubmed_data: dict[str, Any]) -> str:
+    """Find a PMCID in PubMed ArticleIdList."""
+
+    article_ids = pubmed_data.get("ArticleIdList", [])
+    for article_id in article_ids:
+        if getattr(article_id, "attributes", {}).get("IdType") == "pmc":
+            return _normalize_pmcid(_stringify(article_id))
+
+    return ""
+
+
+def _attach_full_text_paragraphs(papers: list[dict[str, Any]]) -> None:
+    """Fetch open-access PMC full text paragraphs for papers with a PMCID."""
+
+    pmcids = [paper["pmcid"] for paper in papers if paper.get("pmcid")]
+    if not pmcids:
+        return
+
+    try:
+        paragraphs_by_pmcid = fetch_pmc_full_text_paragraphs(pmcids)
+    except PubMedFetchError as exc:
+        logger.warning("PMC full-text fetch failed: %s", exc)
+        return
+
+    for paper in papers:
+        pmcid = paper.get("pmcid", "")
+        paper["full_text_paragraphs"] = paragraphs_by_pmcid.get(pmcid, [])
+
+
+def fetch_pmc_full_text_paragraphs(pmcids: list[str]) -> dict[str, list[str]]:
+    """Fetch paragraph text from PMC XML for open-access articles."""
+
+    normalized_pmcids = [
+        pmcid for pmcid in (_normalize_pmcid(pmcid) for pmcid in pmcids) if pmcid
+    ]
+    if not normalized_pmcids:
+        return {}
+
+    _configure_entrez()
+
+    try:
+        with Entrez.efetch(
+            db="pmc",
+            id=",".join(pmcid.removeprefix("PMC") for pmcid in normalized_pmcids),
+            rettype="full",
+            retmode="xml",
+        ) as handle:
+            xml_payload = handle.read()
+    except Exception as exc:
+        raise PubMedFetchError("PMC full-text request failed.") from exc
+
+    if isinstance(xml_payload, bytes):
+        xml_text = xml_payload.decode("utf-8", errors="replace")
+    else:
+        xml_text = str(xml_payload)
+
+    return _parse_pmc_xml_paragraphs(xml_text)
+
+
+def _parse_pmc_xml_paragraphs(xml_text: str) -> dict[str, list[str]]:
+    """Parse PMC article XML into paragraph lists keyed by PMCID."""
+
+    if not xml_text.strip():
+        return {}
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise PubMedFetchError("PMC full-text XML could not be parsed.") from exc
+
+    articles = [
+        element for element in root.iter() if _local_tag(element.tag) == "article"
+    ]
+    if _local_tag(root.tag) == "article":
+        articles = [root]
+
+    paragraphs_by_pmcid: dict[str, list[str]] = {}
+    for article in articles:
+        pmcid = _extract_pmcid_from_article(article)
+        if not pmcid:
+            continue
+
+        paragraphs = _extract_article_body_paragraphs(article)
+        if paragraphs:
+            paragraphs_by_pmcid[pmcid] = paragraphs
+
+    return paragraphs_by_pmcid
+
+
+def _extract_pmcid_from_article(article: ET.Element) -> str:
+    """Extract PMCID from one PMC article XML node."""
+
+    for article_id in article.iter():
+        if _local_tag(article_id.tag) != "article-id":
+            continue
+        if article_id.attrib.get("pub-id-type") in {"pmc", "pmcid"}:
+            return _normalize_pmcid("".join(article_id.itertext()))
+
+    return ""
+
+
+def _extract_article_body_paragraphs(article: ET.Element) -> list[str]:
+    """Extract readable body paragraphs from one PMC article XML node."""
+
+    body = next(
+        (element for element in article.iter() if _local_tag(element.tag) == "body"),
+        None,
+    )
+    if body is None:
+        return []
+
+    paragraphs: list[str] = []
+    for paragraph in body.iter():
+        if _local_tag(paragraph.tag) != "p":
+            continue
+        paragraph_text = _stringify(" ".join(paragraph.itertext()))
+        if _is_useful_full_text_paragraph(paragraph_text):
+            paragraphs.append(paragraph_text)
+
+    return _deduplicate_paragraphs(paragraphs)
+
+
+def _is_useful_full_text_paragraph(text: str) -> bool:
+    """Filter tiny or boilerplate-ish full-text fragments."""
+
+    if len(text) < 80:
+        return False
+
+    lowered = text.casefold()
+    boilerplate_starts = (
+        "copyright",
+        "funding:",
+        "competing interests:",
+        "conflict of interest",
+        "data availability",
+        "publisher's note",
+    )
+    return not lowered.startswith(boilerplate_starts)
+
+
+def _deduplicate_paragraphs(paragraphs: list[str]) -> list[str]:
+    """Remove duplicate paragraphs while preserving order."""
+
+    unique_paragraphs: list[str] = []
+    seen: set[str] = set()
+
+    for paragraph in paragraphs:
+        comparable = paragraph.casefold()
+        if comparable in seen:
+            continue
+
+        unique_paragraphs.append(paragraph)
+        seen.add(comparable)
+
+    return unique_paragraphs
+
+
+def _normalize_pmcid(pmcid: str) -> str:
+    """Normalize PMCID values to the PMC123 shape."""
+
+    normalized = _stringify(pmcid).upper()
+    if not normalized:
+        return ""
+    if normalized.startswith("PMC"):
+        return normalized
+    if normalized.isdigit():
+        return f"PMC{normalized}"
+
+    return normalized
+
+
+def _local_tag(tag: str) -> str:
+    """Return an XML tag name without its namespace."""
+
+    return tag.rsplit("}", 1)[-1]
 
 
 def _parse_publication_types(article_data: dict[str, Any]) -> list[str]:

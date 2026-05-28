@@ -1,6 +1,9 @@
 biopython
+chromadb
 fastapi
 google-generativeai
 python-dotenv
 requests
 uvicorn
+
+# Frontend dependencies are managed separately in frontend/package.json.
