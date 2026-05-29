@@ -15,7 +15,6 @@ from backend.rag.database import (
     RagStorageError,
     query_similar_chunks,
     refresh_pubmed_collection,
-    upsert_pubmed_collection,
 )
 from backend.rag.embedding import EmbeddingError
 from backend.search.fetch import build_pubmed_query, fetch_pubmed_papers
@@ -192,7 +191,7 @@ def ask_medinsight(request: AskRequest) -> dict[str, object]:
             cleaned_keywords,
             max_results=request.max_results,
         )
-        upsert_pubmed_collection({"papers": papers})
+        refresh_pubmed_collection({"papers": papers})
 
         query_embedding = create_user_query_embedding(request.query)["embedding"]
         retrieved_chunks = query_similar_chunks(query_embedding, top_k=3)

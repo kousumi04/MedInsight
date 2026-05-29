@@ -138,6 +138,11 @@ export default function LandingPage() {
           {error ? (
             <p className="mt-3 text-center font-body-sm text-body-sm text-error">{error}</p>
           ) : null}
+          {isSubmitting ? (
+            <div className="mt-4 flex justify-center" aria-label="Loading">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-outline-variant border-t-primary" />
+            </div>
+          ) : null}
           <p className="mt-3 text-center text-[10px] uppercase tracking-widest text-on-surface-variant/50">
             MedInsight AI utilizes verified peer-reviewed data. Verify critical clinical findings.
           </p>

@@ -185,6 +185,11 @@ export default function ChatContinuationPage() {
             </button>
           </div>
           {error ? <p className="mt-3 text-center text-body-sm text-error">{error}</p> : null}
+          {isSubmitting ? (
+            <div className="mt-4 flex justify-center" aria-label="Loading">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-outline-variant border-t-primary" />
+            </div>
+          ) : null}
         </form>
       </div>
     </div>

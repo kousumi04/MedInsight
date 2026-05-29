@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from config import (
@@ -24,6 +25,9 @@ except ImportError:  # pragma: no cover - only reached before dependency install
 
 class RagStorageError(RuntimeError):
     """Raised when temporary RAG storage cannot be refreshed."""
+
+
+MAX_STORED_CHUNKS = int(os.getenv("MAX_STORED_CHUNKS", "100"))
 
 
 def refresh_pubmed_collection(
@@ -51,7 +55,7 @@ def upsert_pubmed_collection(
 ) -> dict[str, int | str]:
     """Embed PubMed chunks and upsert them into the RAG collection."""
 
-    chunks = chunk_pubmed_papers(pubmed_result)
+    chunks = chunk_pubmed_papers(pubmed_result)[:MAX_STORED_CHUNKS]
 
     try:
         client = _get_chroma_client()
@@ -85,7 +89,23 @@ def upsert_pubmed_collection(
     except EmbeddingError as exc:
         raise RagStorageError("Failed to embed PubMed chunks.") from exc
     except Exception as exc:
-        raise RagStorageError("Failed to save chunks in ChromaDB.") from exc
+        try:
+            _delete_collection_if_exists(client, CHROMA_COLLECTION_NAME)
+            collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
+            collection.upsert(
+                ids=[str(chunk["chunk_id"]) for chunk in chunks],
+                documents=[str(chunk["text"]) for chunk in chunks],
+                embeddings=[
+                    chunk["embedding"]
+                    for chunk in embedded_chunks
+                ],
+                metadatas=[
+                    _prepare_metadata(chunk.get("metadata", {}))
+                    for chunk in chunks
+                ],
+            )
+        except Exception as retry_exc:
+            raise RagStorageError("Failed to save chunks in ChromaDB.") from retry_exc
 
     paper_ids = {
         str(chunk.get("metadata", {}).get("pmid", ""))
