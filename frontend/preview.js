@@ -1,13 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
-
-const recents = [
-  ["description", "CAR-T Cell Efficacy"],
-  ["science", "Amyloid Beta Inhibitors"],
-  ["database", "CRISPR Off-target Analysis"],
-  ["clinical_notes", "GLP-1 Weight Loss Study"],
-];
+import { useRef } from "react";
 
 const sources = [
   ["Nature Medicine: Solid Tumor Microenvironment", "Nature · 2024"],
@@ -29,7 +22,6 @@ function Icon({ children, className = "" }) {
 }
 
 export default function PreviewPage() {
-  const [activeRecent, setActiveRecent] = useState(0);
   const textareaRef = useRef(null);
 
   function resizeTextarea() {
@@ -48,59 +40,6 @@ export default function PreviewPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0A0A0A] text-on-surface">
-      <aside className="z-40 flex w-64 flex-col border-r border-outline-variant bg-[#0A0A0A]">
-        <div className="p-6">
-          <h1 className="mb-8 font-headline-md text-headline-md font-bold text-primary">MedInsight</h1>
-          <button className="group mb-6 flex w-full items-center justify-between rounded-lg border border-outline-variant bg-surface-container px-4 py-3 transition-all duration-100 hover:border-primary active:scale-95">
-            <span className="font-body-md text-body-md">New Research</span>
-            <Icon className="text-primary transition-transform group-hover:rotate-90">add</Icon>
-          </button>
-
-          <nav className="space-y-1">
-            <p className="mb-3 px-4 font-label-caps text-label-caps uppercase tracking-widest text-on-surface-variant">
-              Recents
-            </p>
-            <div className="custom-scrollbar max-h-[calc(100vh-400px)] space-y-1 overflow-y-auto">
-              {recents.map(([icon, label], index) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setActiveRecent(index)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left transition-colors ${
-                    activeRecent === index
-                      ? "active-nav-item"
-                      : "text-on-surface-variant hover:text-on-surface"
-                  }`}
-                >
-                  <Icon className="text-[20px]">{icon}</Icon>
-                  <span className="truncate font-body-sm text-body-sm">{label}</span>
-                </button>
-              ))}
-            </div>
-          </nav>
-        </div>
-
-        <div className="mt-auto space-y-2 border-t border-outline-variant p-4">
-          <a
-            className="flex items-center gap-3 rounded-lg px-4 py-2 text-on-surface-variant transition-colors hover:bg-surface-container"
-            href="#"
-          >
-            <Icon>settings</Icon>
-            <span className="font-body-sm text-body-sm">Settings</span>
-          </a>
-          <div className="mt-2 flex items-center gap-3 rounded-lg border border-outline-variant bg-[#141414] px-4 py-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-container text-xs font-bold text-on-primary-container">
-              JD
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <p className="truncate font-body-sm text-body-sm font-semibold">Dr. Julian Dane</p>
-              <p className="text-[10px] uppercase tracking-tighter text-on-surface-variant">Clinical Lead</p>
-            </div>
-            <Icon className="text-[18px] text-on-surface-variant">unfold_more</Icon>
-          </div>
-        </div>
-      </aside>
-
       <main className="relative flex h-full flex-1 flex-col bg-[#0A0A0A]">
         <header className="flex h-16 items-center justify-between border-b border-outline-variant bg-[#0A0A0A] px-margin-desktop">
           <div className="flex items-center gap-4">

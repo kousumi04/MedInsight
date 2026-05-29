@@ -14,6 +14,7 @@ from config import (
 )
 
 from backend.rag.chunking import chunk_pubmed_papers
+from backend.rag.embedding import EmbeddingError, embed_chunks
 
 try:
     import chromadb
@@ -34,11 +35,26 @@ def refresh_pubmed_collection(
     every new PubMed search replaces the previous temporary RAG context.
     """
 
+    try:
+        client = _get_chroma_client()
+        _delete_collection_if_exists(client, CHROMA_COLLECTION_NAME)
+    except RagStorageError:
+        raise
+    except Exception as exc:
+        raise RagStorageError("Failed to connect to ChromaDB.") from exc
+
+    return upsert_pubmed_collection(pubmed_result)
+
+
+def upsert_pubmed_collection(
+    pubmed_result: dict[str, Any] | list[dict[str, Any]],
+) -> dict[str, int | str]:
+    """Embed PubMed chunks and upsert them into the RAG collection."""
+
     chunks = chunk_pubmed_papers(pubmed_result)
 
     try:
         client = _get_chroma_client()
-        _delete_collection_if_exists(client, CHROMA_COLLECTION_NAME)
         collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
     except RagStorageError:
         raise
@@ -53,14 +69,21 @@ def refresh_pubmed_collection(
         }
 
     try:
-        collection.add(
+        embedded_chunks = embed_chunks(chunks)
+        collection.upsert(
             ids=[str(chunk["chunk_id"]) for chunk in chunks],
             documents=[str(chunk["text"]) for chunk in chunks],
+            embeddings=[
+                chunk["embedding"]
+                for chunk in embedded_chunks
+            ],
             metadatas=[
                 _prepare_metadata(chunk.get("metadata", {}))
                 for chunk in chunks
             ],
         )
+    except EmbeddingError as exc:
+        raise RagStorageError("Failed to embed PubMed chunks.") from exc
     except Exception as exc:
         raise RagStorageError("Failed to save chunks in ChromaDB.") from exc
 
@@ -75,6 +98,45 @@ def refresh_pubmed_collection(
         "papers_used": len(paper_ids),
         "chunks_stored": len(chunks),
     }
+
+
+def query_similar_chunks(
+    query_embedding: list[float],
+    top_k: int = 3,
+) -> list[dict[str, Any]]:
+    """Return the nearest stored chunks for a user query embedding."""
+
+    if not query_embedding:
+        raise RagStorageError("Query embedding cannot be empty.")
+
+    try:
+        client = _get_chroma_client()
+        collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
+        result = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception as exc:
+        raise RagStorageError("Failed to query ChromaDB chunks.") from exc
+
+    documents = _first_result_list(result.get("documents", []))
+    metadatas = _first_result_list(result.get("metadatas", []))
+    distances = _first_result_list(result.get("distances", []))
+    ids = _first_result_list(result.get("ids", []))
+
+    chunks: list[dict[str, Any]] = []
+    for index, document in enumerate(documents):
+        chunks.append(
+            {
+                "id": str(ids[index]) if index < len(ids) else "",
+                "text": str(document),
+                "metadata": metadatas[index] if index < len(metadatas) else {},
+                "distance": float(distances[index]) if index < len(distances) else None,
+            }
+        )
+
+    return chunks
 
 
 def _get_chroma_client() -> Any:
@@ -118,3 +180,13 @@ def _prepare_metadata(metadata: dict[str, Any]) -> dict[str, str | int | float |
             prepared[key] = json.dumps(value, ensure_ascii=False)
 
     return prepared
+
+
+def _first_result_list(values: Any) -> list[Any]:
+    """Normalize Chroma's one-query result lists."""
+
+    if isinstance(values, list) and values and isinstance(values[0], list):
+        return values[0]
+    if isinstance(values, list):
+        return values
+    return []

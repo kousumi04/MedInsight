@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
+import os
+import re
 from typing import Any
 
 from config import EMBEDDING_MODEL_NAME, GEMINI_API_KEY
 
 EMBEDDING_BATCH_SIZE = 100
+LOCAL_EMBEDDING_DIMENSIONS = 384
 
 try:
     import google.generativeai as genai
@@ -22,33 +27,36 @@ def embed_texts(
     texts: list[str],
     task_type: str = "retrieval_document",
 ) -> list[list[float]]:
-    """Embed a list of texts using Gemini's embedding API."""
+    """Embed texts, falling back locally when Gemini is unavailable or limited."""
 
     if not texts:
         return []
 
-    _configure_gemini()
-    model_name = _resolve_embedding_model()
-    embeddings: list[list[float]] = []
+    if os.getenv("USE_GEMINI_EMBEDDINGS", "").casefold() not in {"1", "true", "yes"}:
+        return [_embed_text_locally(text) for text in texts]
 
-    for batch in _batched(texts, EMBEDDING_BATCH_SIZE):
-        try:
+    try:
+        _configure_gemini()
+        model_name = _resolve_embedding_model()
+        embeddings: list[list[float]] = []
+
+        for batch in _batched(texts, EMBEDDING_BATCH_SIZE):
             response = genai.embed_content(
                 model=model_name,
                 content=batch,
                 task_type=task_type,
             )
-        except Exception as exc:
-            raise EmbeddingError("Gemini embedding request failed.") from exc
 
-        batch_embeddings = _parse_embeddings(response)
-        if len(batch_embeddings) != len(batch):
-            raise EmbeddingError("Gemini returned an unexpected embedding count.")
-        if not batch_embeddings:
-            raise EmbeddingError("Gemini returned an empty embedding.")
-        embeddings.extend(batch_embeddings)
+            batch_embeddings = _parse_embeddings(response)
+            if len(batch_embeddings) != len(batch):
+                raise EmbeddingError("Gemini returned an unexpected embedding count.")
+            if not batch_embeddings:
+                raise EmbeddingError("Gemini returned an empty embedding.")
+            embeddings.extend(batch_embeddings)
 
-    return embeddings
+        return embeddings
+    except Exception:
+        return [_embed_text_locally(text) for text in texts]
 
 
 def embed_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -136,3 +144,24 @@ def _batched(items: list[str], batch_size: int) -> list[list[str]]:
         items[start : start + batch_size]
         for start in range(0, len(items), batch_size)
     ]
+
+
+def _embed_text_locally(text: str) -> list[float]:
+    """Create a stable hashing-vector embedding as an offline fallback."""
+
+    vector = [0.0] * LOCAL_EMBEDDING_DIMENSIONS
+    tokens = re.findall(r"[a-z0-9][a-z0-9+-]*", text.casefold())
+    if not tokens:
+        return vector
+
+    for token in tokens:
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:4], "big") % LOCAL_EMBEDDING_DIMENSIONS
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[index] += sign
+
+    magnitude = math.sqrt(sum(value * value for value in vector))
+    if not magnitude:
+        return vector
+
+    return [value / magnitude for value in vector]
