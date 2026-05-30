@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from config import (
@@ -12,6 +11,7 @@ from config import (
     CHROMA_DATABASE,
     CHROMA_LOCAL_PATH,
     CHROMA_TENANT,
+    MAX_STORED_CHUNKS,
 )
 
 from backend.rag.chunking import chunk_pubmed_papers
@@ -32,9 +32,6 @@ except ImportError:  # pragma: no cover - only reached before dependency install
 
 class RagStorageError(RuntimeError):
     """Raised when temporary RAG storage cannot be refreshed."""
-
-
-MAX_STORED_CHUNKS = int(os.getenv("MAX_STORED_CHUNKS", "100"))
 
 
 def refresh_pubmed_collection(
@@ -211,4 +208,3 @@ def _prepare_metadata(metadata: dict[str, Any]) -> dict[str, str | int | float |
             prepared[key] = json.dumps(value, ensure_ascii=False)
 
     return prepared
-

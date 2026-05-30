@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 from typing import Any
 
-from config import EMBEDDING_MODEL_NAME, GEMINI_API_KEY
+from config import EMBEDDING_MODEL_NAME, GEMINI_API_KEY, USE_GEMINI_EMBEDDINGS
 
 try:
     from langchain_core.embeddings import Embeddings
@@ -51,7 +50,7 @@ def embed_texts(
     if not texts:
         return []
 
-    if os.getenv("USE_GEMINI_EMBEDDINGS", "").casefold() not in {"1", "true", "yes"}:
+    if not USE_GEMINI_EMBEDDINGS:
         return [_embed_text_locally(text) for text in texts]
 
     try:

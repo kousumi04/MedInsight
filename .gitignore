@@ -21,10 +21,14 @@ wheels/
 *.egg-info/
 *.egg
 .next/
+frontend/.next/
 out/
+frontend/out/
 coverage/
 .turbo/
+frontend/.turbo/
 .vercel/
+frontend/.vercel/
 
 # Virtual environments
 .venv/
@@ -45,6 +49,7 @@ ENV/
 *.log
 logs/
 *.pid
+dev-server*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -61,10 +66,13 @@ data/
 storage/
 vector_store/
 chroma/
+backend/chroma/
 .chroma/
 faiss_index/
 *.index
 *.parquet
+tmp/
+temp/
 
 # Nested repository backup created while flattening backend into root repo
 backend/.git-backup-nested-repo/

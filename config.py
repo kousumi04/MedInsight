@@ -37,12 +37,40 @@ def _load_simple_env_file(env_path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
+def _get_int_env(key: str, default: int) -> int:
+    """Read an integer env value with a safe fallback."""
+
+    try:
+        return int(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_float_env(key: str, default: float) -> float:
+    """Read a float env value with a safe fallback."""
+
+    try:
+        return float(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_bool_env(key: str, default: bool = False) -> bool:
+    """Read a bool-like env value with a safe fallback."""
+
+    value = os.getenv(key)
+    if value is None:
+        return default
+
+    return value.casefold() in {"1", "true", "yes", "on"}
+
+
 _load_environment()
 
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-flash")
-MAX_KEYWORDS = int(os.getenv("MAX_KEYWORDS", "8"))
+MAX_KEYWORDS = _get_int_env("MAX_KEYWORDS", 8)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.1-8b-instant")
@@ -141,8 +169,8 @@ if SUPABASE_PUBLISHABLE_KEY:
 PUBMED_EMAIL = os.getenv("PUBMED_EMAIL", "")
 PUBMED_TOOL_NAME = os.getenv("PUBMED_TOOL_NAME", "medinsight")
 PUBMED_API_KEY = os.getenv("PUBMED_API_KEY", "")
-PUBMED_TIMEOUT_SECONDS = int(os.getenv("PUBMED_TIMEOUT_SECONDS", "20"))
-PUBMED_SEARCH_BUFFER = int(os.getenv("PUBMED_SEARCH_BUFFER", "30"))
+PUBMED_TIMEOUT_SECONDS = _get_int_env("PUBMED_TIMEOUT_SECONDS", 20)
+PUBMED_SEARCH_BUFFER = _get_int_env("PUBMED_SEARCH_BUFFER", 30)
 
 CHROMA_API_KEY = os.getenv("CHROMA_API_KEY", "")
 CHROMA_TENANT = os.getenv("CHROMA_TENANT", "")
@@ -155,6 +183,30 @@ CHROMA_LOCAL_PATH = os.getenv("CHROMA_LOCAL_PATH", "chroma")
 EMBEDDING_MODEL_NAME = os.getenv(
     "EMBEDDING_MODEL_NAME",
     "models/gemini-embedding-001",
+)
+USE_GEMINI_EMBEDDINGS = _get_bool_env("USE_GEMINI_EMBEDDINGS")
+
+MAX_STORED_CHUNKS = _get_int_env("MAX_STORED_CHUNKS", 100)
+
+MEDINSIGHT_CACHE_TTL_SECONDS = _get_int_env(
+    "MEDINSIGHT_CACHE_TTL_SECONDS",
+    3 * 60 * 60,
+)
+MEDINSIGHT_CACHE_SIMILARITY_THRESHOLD = _get_float_env(
+    "MEDINSIGHT_CACHE_SIMILARITY_THRESHOLD",
+    0.78,
+)
+MEDINSIGHT_RELATED_QUERY_SIMILARITY_THRESHOLD = _get_float_env(
+    "MEDINSIGHT_RELATED_QUERY_SIMILARITY_THRESHOLD",
+    0.62,
+)
+MEDINSIGHT_RELATED_QUERY_FOLLOW_UP_THRESHOLD = _get_float_env(
+    "MEDINSIGHT_RELATED_QUERY_FOLLOW_UP_THRESHOLD",
+    0.45,
+)
+MEDINSIGHT_RELATED_QUERY_LOOKBACK = _get_int_env(
+    "MEDINSIGHT_RELATED_QUERY_LOOKBACK",
+    6,
 )
 
 
