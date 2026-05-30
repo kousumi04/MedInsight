@@ -10,6 +10,11 @@ from typing import Any
 
 from config import EMBEDDING_MODEL_NAME, GEMINI_API_KEY
 
+try:
+    from langchain_core.embeddings import Embeddings
+except ImportError:  # pragma: no cover - only reached before dependency install.
+    Embeddings = object  # type: ignore[assignment,misc]
+
 EMBEDDING_BATCH_SIZE = 100
 LOCAL_EMBEDDING_DIMENSIONS = 384
 
@@ -21,6 +26,20 @@ except ImportError:  # pragma: no cover - only reached before dependency install
 
 class EmbeddingError(RuntimeError):
     """Raised when chunk embedding cannot be completed."""
+
+
+class MedInsightEmbeddings(Embeddings):
+    """LangChain embedding adapter backed by MedInsight's embedding logic."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed documents for vector storage."""
+
+        return embed_texts(texts, task_type="retrieval_document")
+
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a query for vector retrieval."""
+
+        return embed_texts([text], task_type="retrieval_query")[0]
 
 
 def embed_texts(

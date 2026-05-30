@@ -15,12 +15,19 @@ from config import (
 )
 
 from backend.rag.chunking import chunk_pubmed_papers
-from backend.rag.embedding import EmbeddingError, embed_chunks
+from backend.rag.embedding import EmbeddingError, MedInsightEmbeddings
 
 try:
     import chromadb
 except ImportError:  # pragma: no cover - only reached before dependency install.
     chromadb = None  # type: ignore[assignment]
+
+try:
+    from langchain_chroma import Chroma
+    from langchain_core.documents import Document
+except ImportError:  # pragma: no cover - only reached before dependency install.
+    Chroma = None  # type: ignore[assignment]
+    Document = None  # type: ignore[assignment]
 
 
 class RagStorageError(RuntimeError):
@@ -73,36 +80,38 @@ def upsert_pubmed_collection(
         }
 
     try:
-        embedded_chunks = embed_chunks(chunks)
-        collection.upsert(
-            ids=[str(chunk["chunk_id"]) for chunk in chunks],
-            documents=[str(chunk["text"]) for chunk in chunks],
-            embeddings=[
-                chunk["embedding"]
-                for chunk in embedded_chunks
-            ],
-            metadatas=[
-                _prepare_metadata(chunk.get("metadata", {}))
+        vector_store = _get_vector_store(client)
+        vector_store.add_documents(
+            documents=[
+                Document(
+                    page_content=str(chunk["text"]),
+                    metadata={
+                        **_prepare_metadata(chunk.get("metadata", {})),
+                        "id": str(chunk["chunk_id"]),
+                    },
+                )
                 for chunk in chunks
             ],
+            ids=[str(chunk["chunk_id"]) for chunk in chunks],
         )
     except EmbeddingError as exc:
         raise RagStorageError("Failed to embed PubMed chunks.") from exc
-    except Exception as exc:
+    except Exception:
         try:
             _delete_collection_if_exists(client, CHROMA_COLLECTION_NAME)
-            collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
-            collection.upsert(
-                ids=[str(chunk["chunk_id"]) for chunk in chunks],
-                documents=[str(chunk["text"]) for chunk in chunks],
-                embeddings=[
-                    chunk["embedding"]
-                    for chunk in embedded_chunks
-                ],
-                metadatas=[
-                    _prepare_metadata(chunk.get("metadata", {}))
+            vector_store = _get_vector_store(client)
+            vector_store.add_documents(
+                documents=[
+                    Document(
+                        page_content=str(chunk["text"]),
+                        metadata={
+                            **_prepare_metadata(chunk.get("metadata", {})),
+                            "id": str(chunk["chunk_id"]),
+                        },
+                    )
                     for chunk in chunks
                 ],
+                ids=[str(chunk["chunk_id"]) for chunk in chunks],
             )
         except Exception as retry_exc:
             raise RagStorageError("Failed to save chunks in ChromaDB.") from retry_exc
@@ -120,39 +129,26 @@ def upsert_pubmed_collection(
     }
 
 
-def query_similar_chunks(
-    query_embedding: list[float],
-    top_k: int = 3,
-) -> list[dict[str, Any]]:
-    """Return the nearest stored chunks for a user query embedding."""
+def retrieve_similar_chunks(query: str, top_k: int = 3) -> list[dict[str, Any]]:
+    """Return nearest chunks using LangChain's Chroma vector store retriever."""
 
-    if not query_embedding:
-        raise RagStorageError("Query embedding cannot be empty.")
+    if not query.strip():
+        raise RagStorageError("Query cannot be empty.")
 
     try:
-        client = _get_chroma_client()
-        collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
-        result = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+        vector_store = _get_vector_store(_get_chroma_client())
+        results = vector_store.similarity_search_with_score(query, k=top_k)
     except Exception as exc:
-        raise RagStorageError("Failed to query ChromaDB chunks.") from exc
-
-    documents = _first_result_list(result.get("documents", []))
-    metadatas = _first_result_list(result.get("metadatas", []))
-    distances = _first_result_list(result.get("distances", []))
-    ids = _first_result_list(result.get("ids", []))
+        raise RagStorageError("Failed to retrieve ChromaDB chunks.") from exc
 
     chunks: list[dict[str, Any]] = []
-    for index, document in enumerate(documents):
+    for document, score in results:
         chunks.append(
             {
-                "id": str(ids[index]) if index < len(ids) else "",
-                "text": str(document),
-                "metadata": metadatas[index] if index < len(metadatas) else {},
-                "distance": float(distances[index]) if index < len(distances) else None,
+                "id": str(document.metadata.get("id", "")),
+                "text": document.page_content,
+                "metadata": dict(document.metadata),
+                "distance": float(score) if score is not None else None,
             }
         )
 
@@ -173,6 +169,21 @@ def _get_chroma_client() -> Any:
         )
 
     return chromadb.PersistentClient(path=CHROMA_LOCAL_PATH)
+
+
+def _get_vector_store(client: Any) -> Any:
+    """Create a LangChain Chroma vector store over the MedInsight collection."""
+
+    if Chroma is None or Document is None:
+        raise RagStorageError(
+            "LangChain Chroma dependencies are not installed. Install requirements first."
+        )
+
+    return Chroma(
+        client=client,
+        collection_name=CHROMA_COLLECTION_NAME,
+        embedding_function=MedInsightEmbeddings(),
+    )
 
 
 def _delete_collection_if_exists(client: Any, collection_name: str) -> None:
@@ -201,12 +212,3 @@ def _prepare_metadata(metadata: dict[str, Any]) -> dict[str, str | int | float |
 
     return prepared
 
-
-def _first_result_list(values: Any) -> list[Any]:
-    """Normalize Chroma's one-query result lists."""
-
-    if isinstance(values, list) and values and isinstance(values[0], list):
-        return values[0]
-    if isinstance(values, list):
-        return values
-    return []

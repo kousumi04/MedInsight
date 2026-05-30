@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { getChatSessionId, loadChatMessages, saveChatMessages } from "../../utils/chatMemory";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 const emptyResult = {
@@ -139,32 +141,42 @@ export default function ChatContinuationPage() {
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    const storedHistory = sessionStorage.getItem("medinsight:chatHistory");
-    if (storedHistory) {
+    let isMounted = true;
+
+    async function restoreMessages() {
+      const storedMessages = await loadChatMessages();
+      if (!isMounted) return;
+
+      if (storedMessages.length) {
+        setMessages(storedMessages);
+        return;
+      }
+
+      const storedResult = sessionStorage.getItem("medinsight:lastQueryResult");
+      if (!storedResult) {
+        setMessages([makeMessage(emptyResult)]);
+        return;
+      }
+
       try {
-        const parsedHistory = JSON.parse(storedHistory);
-        if (Array.isArray(parsedHistory) && parsedHistory.length) {
-          setMessages(parsedHistory);
+        const firstMessage = makeMessage(JSON.parse(storedResult));
+        if (isMounted) {
+          setMessages([firstMessage]);
+          void saveChatMessages([firstMessage]);
           return;
         }
       } catch {
-        sessionStorage.removeItem("medinsight:chatHistory");
+        if (isMounted) {
+          setMessages([makeMessage(emptyResult)]);
+        }
       }
     }
 
-    const storedResult = sessionStorage.getItem("medinsight:lastQueryResult");
-    if (!storedResult) {
-      setMessages([makeMessage(emptyResult)]);
-      return;
-    }
+    restoreMessages();
 
-    try {
-      const firstMessage = makeMessage(JSON.parse(storedResult));
-      setMessages([firstMessage]);
-      sessionStorage.setItem("medinsight:chatHistory", JSON.stringify([firstMessage]));
-    } catch {
-      setMessages([makeMessage(emptyResult)]);
-    }
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -186,7 +198,10 @@ export default function ChatContinuationPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ query: normalizedPrompt }),
+        body: JSON.stringify({
+          query: normalizedPrompt,
+          session_id: getChatSessionId(),
+        }),
       });
 
       const payload = await response.json();
@@ -197,8 +212,7 @@ export default function ChatContinuationPage() {
       const nextMessage = makeMessage(payload);
       setMessages((currentMessages) => {
         const nextMessages = [...currentMessages, nextMessage];
-        sessionStorage.setItem("medinsight:lastQueryResult", JSON.stringify(payload));
-        sessionStorage.setItem("medinsight:chatHistory", JSON.stringify(nextMessages));
+        void saveChatMessages(nextMessages);
         return nextMessages;
       });
       setPrompt("");

@@ -8,15 +8,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.query_engine.userquery_embedding import create_user_query_embedding
 from backend.query_engine.userquery import process_user_query
-from backend.rag.answering import AnsweringError, generate_answer
 from backend.rag.database import (
     RagStorageError,
-    query_similar_chunks,
     refresh_pubmed_collection,
 )
-from backend.rag.embedding import EmbeddingError
+from backend.rag.langchain_pipeline import MedInsightChainError, run_medinsight_chain
 from backend.search.fetch import build_pubmed_query, fetch_pubmed_papers
 
 
@@ -101,6 +98,10 @@ class AskRequest(BaseModel):
     """Request body for end-to-end MedInsight answering."""
 
     query: str = Field(..., min_length=1, description="Medical research query")
+    session_id: str | None = Field(
+        default=None,
+        description="Stable chat session identifier for cache reuse.",
+    )
     max_results: int = Field(
         default=10,
         ge=1,
@@ -181,43 +182,16 @@ def search_pubmed_papers(request: PubMedSearchRequest) -> dict[str, object]:
 
 @app.post("/query/ask", response_model=AskResponse)
 def ask_medinsight(request: AskRequest) -> dict[str, object]:
-    """Run the complete query -> PubMed -> RAG -> answer pipeline."""
+    """Run the LangChain query -> PubMed -> RAG -> answer pipeline."""
 
     try:
-        keyword_result = process_user_query(request.query)
-        cleaned_keywords = keyword_result["cleaned_keywords"]
-        pubmed_query = build_pubmed_query(cleaned_keywords)
-        papers = fetch_pubmed_papers(
-            cleaned_keywords,
-            max_results=request.max_results,
+        return run_medinsight_chain(
+            request.query,
+            request.max_results,
+            session_id=request.session_id,
         )
-        refresh_pubmed_collection({"papers": papers})
-
-        query_embedding = create_user_query_embedding(request.query)["embedding"]
-        retrieved_chunks = query_similar_chunks(query_embedding, top_k=3)
-        try:
-            answer = generate_answer(request.query, retrieved_chunks)
-        except AnsweringError as exc:
-            logger.exception("Answer generation failed.")
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Answer generation failed. Check GROQ_API_KEY, the groq "
-                    "package, and Groq model settings."
-                ),
-            ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except (RuntimeError, RagStorageError, EmbeddingError) as exc:
-        logger.exception("End-to-end query failed.")
+    except (RuntimeError, RagStorageError, MedInsightChainError) as exc:
+        logger.exception("LangChain end-to-end query failed.")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return {
-        "original_query": keyword_result["original_query"],
-        "extracted_keywords": keyword_result["extracted_keywords"],
-        "cleaned_keywords": cleaned_keywords,
-        "pubmed_query": pubmed_query,
-        "papers": papers,
-        "retrieved_chunks": retrieved_chunks,
-        "answer": answer,
-    }

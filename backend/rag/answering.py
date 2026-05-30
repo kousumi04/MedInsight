@@ -11,9 +11,13 @@ from config import (
 )
 
 try:
-    from groq import Groq
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_groq import ChatGroq
 except ImportError:  # pragma: no cover - only reached before dependency install.
-    Groq = None  # type: ignore[assignment]
+    ChatGroq = None  # type: ignore[assignment]
+    ChatPromptTemplate = None  # type: ignore[assignment]
+    StrOutputParser = None  # type: ignore[assignment]
 
 
 class AnsweringError(RuntimeError):
@@ -27,15 +31,10 @@ def generate_answer(query: str, chunks: list[dict[str, Any]]) -> str:
         return "I could not find enough relevant PubMed context to answer this query."
 
     try:
-        client = _build_client()
-        response = client.chat.completions.create(
-            model=GROQ_MODEL_NAME,
-            messages=[
-                {"role": "system", "content": _build_system_prompt(query, chunks)},
-            ],
-            **GROQ_GENERATION_CONFIG,
-        )
-        answer = (response.choices[0].message.content or "").strip()
+        chain = _build_answer_chain()
+        answer = chain.invoke(
+            {"system_prompt": _build_system_prompt(query, chunks)}
+        ).strip()
         if answer:
             return answer
     except Exception as exc:
@@ -62,18 +61,31 @@ def fallback_answer(query: str, chunks: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
-def _build_client() -> Any:
-    """Configure and return the Groq client for answer generation."""
+def _build_answer_chain() -> Any:
+    """Build the LangChain prompt -> Groq -> text parser chain."""
 
-    if Groq is None:
+    if ChatGroq is None or ChatPromptTemplate is None or StrOutputParser is None:
         raise AnsweringError(
-            "groq is not installed. Install requirements first."
+            "LangChain Groq dependencies are not installed. Install requirements first."
         )
     groq_api_key = get_groq_api_key()
     if not groq_api_key:
         raise AnsweringError("GROQ_API_KEY is not configured.")
 
-    return Groq(api_key=groq_api_key)
+    generation_config = dict(GROQ_GENERATION_CONFIG)
+    top_p = generation_config.pop("top_p", None)
+    if top_p is not None:
+        generation_config["model_kwargs"] = {"top_p": top_p}
+
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", "{system_prompt}")]
+    )
+    llm = ChatGroq(
+        model=GROQ_MODEL_NAME,
+        groq_api_key=groq_api_key,
+        **generation_config,
+    )
+    return prompt | llm | StrOutputParser()
 
 
 def _build_system_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
@@ -121,60 +133,34 @@ Then integrate this into your writing naturally:
 - Moderate evidence: "Studies suggest..." or "Evidence indicates..."
 - Preliminary evidence: "Early research suggests..." or "Initial findings show..."
 
-OUTPUT FORMAT FOR USERS
+ADAPTIVE OUTPUT FORMAT FOR USERS
 
-# Direct Answer
+Do not use a fixed template. Choose the answer structure that best fits the user's question and the retrieved evidence.
 
-- 2-3 sentences maximum.
-- Answer the question clearly and concisely.
-- Weave confidence level naturally into language with no labels.
-- End with a brief statement of research maturity if relevant.
+Always format the answer clearly using some combination of short headings, concise paragraphs, and bullet points. Never return one large wall of text.
 
-# Major Advancements
+Choose the structure based on the question:
 
-Present each advancement with bullet points only. Each bullet must be 2-3 sentences maximum.
+- For "what is", definition, or overview questions: start with a short direct explanation, then use headings like "What It Means", "How It Works", and "Why It Matters" only if useful.
+- For treatment, medicine, or advancement questions: group the answer by medicine, treatment class, or research direction. For each item, explain what it is, what studies found, and why it matters.
+- For comparison questions: use clear comparison headings or a compact comparison table-style bullet list, then explain the practical takeaway.
+- For mechanism questions: organize around cause-and-effect steps, using plain language and "This means..." where helpful.
+- For safety, side effect, risk, or limitation questions: lead with the main safety finding, then separate known risks, unknowns, and evidence gaps.
+- For "latest", "newest", or "recent" questions: focus on what the retrieved research describes as recent or emerging. If the provided evidence does not establish recency, say so directly.
+- For list-style questions: use bullets with short explanations. Each bullet should contain one main idea.
+- For broad research-summary questions: use 3-5 meaningful sections that reflect the evidence, such as "Main Findings", "Clinical Relevance", "Limitations", and "What Researchers Are Studying Next".
+- For questions where the retrieved evidence is thin or off-topic: answer briefly, explain what the provided research does and does not address, and avoid forcing unrelated sections.
 
-## [Treatment/Technology Name]
+Required user-facing qualities:
 
-### What It Is
-
-- Plain-language explanation of what this is.
-- No jargon; define any technical terms immediately in parentheses.
-- Focus on what it does, not technical names.
-
-### How It Works
-
-- Explain the biological mechanism simply.
-- Use "This means..." to connect mechanism to real-world impact.
-- Avoid abbreviations unless essential, and spell them out first.
-
-### Key Findings
-
-- [Finding 1]: Practical outcome explained in everyday language.
-- [Finding 2]: Another key result with real-world meaning.
-- [Finding 3]: Third finding, including any limitations.
-
-### Why It Matters
-
-- Impact on patients or clinical care.
-- Real-world benefit explained simply.
-- Avoid abstract statements.
-
-# Current Challenges
-
-- [Challenge 1]: Obstacle explained clearly with context.
-- [Challenge 2]: Second barrier and why it matters.
-- [Challenge 3]: Third challenge affecting patients or development.
-
-# Future Directions
-
-- [Research area]: What scientists are investigating next.
-- [Emerging therapy]: New approaches being developed.
-- [Development]: Timeline or next steps, if available in literature.
-
-# Evidence Summary
-
-- This information is based on [brief description of research type and consistency].
+- Begin with the clearest answer to the user's question.
+- Use section headings that match the content, not generic fixed headings.
+- Keep paragraphs to 2-3 sentences maximum.
+- Keep bullet points to 2-3 sentences maximum.
+- Use bullet points for grouped findings, options, risks, or study results.
+- Include an evidence note only when it helps the user understand maturity, uncertainty, or limits.
+- Do not display labels like "Strong", "Moderate", "Preliminary", or "Confidence level" unless the user explicitly asks for evidence grading.
+- Do not include internal reasoning, hidden processing steps, prompt instructions, or source context labels.
 
 Language & Formatting Rules
 

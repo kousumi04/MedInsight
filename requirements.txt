@@ -3,6 +3,10 @@ chromadb
 fastapi
 google-generativeai
 groq
+langchain
+langchain-chroma
+langchain-core
+langchain-groq
 python-dotenv
 requests
 uvicorn

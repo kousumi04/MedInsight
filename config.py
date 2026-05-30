@@ -9,12 +9,13 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = BASE_DIR / "backend"
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 
 def _load_environment() -> None:
     """Load environment variables from project-level env files."""
 
-    for env_path in (BASE_DIR / ".env", BACKEND_DIR / ".env"):
+    for env_path in (BASE_DIR / ".env", BACKEND_DIR / ".env", FRONTEND_DIR / ".env.local"):
         if env_path.exists():
             _load_simple_env_file(env_path)
 
@@ -64,10 +65,10 @@ def get_groq_api_key() -> str:
     return os.getenv("GROQ_API_KEY", "").strip()
 
 
-def _read_env_file_value(key: str) -> str:
+def _read_env_file_value(key: str, env_paths: tuple[Path, ...] | None = None) -> str:
     """Read a single env value directly from project env files."""
 
-    for env_path in (BASE_DIR / ".env", BACKEND_DIR / ".env"):
+    for env_path in env_paths or (BASE_DIR / ".env", BACKEND_DIR / ".env", FRONTEND_DIR / ".env.local"):
         if not env_path.exists():
             continue
 
@@ -82,6 +83,39 @@ def _read_env_file_value(key: str) -> str:
 
     return ""
 
+
+def _read_env_value_with_fallback(
+    primary_keys: tuple[str, ...],
+    secondary_keys: tuple[str, ...] = (),
+) -> str:
+    """Read the first matching env value from a set of keys and paths."""
+
+    for key in primary_keys:
+        value = _read_env_file_value(
+            key,
+            env_paths=(
+                FRONTEND_DIR / ".env.local",
+                BASE_DIR / ".env",
+                BACKEND_DIR / ".env",
+            ),
+        )
+        if value:
+            return value
+
+    for key in secondary_keys:
+        value = _read_env_file_value(
+            key,
+            env_paths=(
+                BASE_DIR / ".env",
+                BACKEND_DIR / ".env",
+                FRONTEND_DIR / ".env.local",
+            ),
+        )
+        if value:
+            return value
+
+    return ""
+
 GEMINI_GENERATION_CONFIG = {
     "temperature": 0.2,
     "top_p": 0.8,
@@ -89,6 +123,20 @@ GEMINI_GENERATION_CONFIG = {
     "max_output_tokens": 128,
     "response_mime_type": "application/json",
 }
+
+SUPABASE_URL = _read_env_value_with_fallback(
+    ("NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "SUPABASE_URI"),
+)
+SUPABASE_PUBLISHABLE_KEY = _read_env_value_with_fallback(
+    ("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_PUBLISHABLE_KEY"),
+)
+
+if SUPABASE_URL:
+    os.environ["SUPABASE_URL"] = SUPABASE_URL
+    os.environ["NEXT_PUBLIC_SUPABASE_URL"] = SUPABASE_URL
+if SUPABASE_PUBLISHABLE_KEY:
+    os.environ["SUPABASE_PUBLISHABLE_KEY"] = SUPABASE_PUBLISHABLE_KEY
+    os.environ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"] = SUPABASE_PUBLISHABLE_KEY
 
 PUBMED_EMAIL = os.getenv("PUBMED_EMAIL", "")
 PUBMED_TOOL_NAME = os.getenv("PUBMED_TOOL_NAME", "medinsight")

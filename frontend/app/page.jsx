@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useRef } from "react";
 import { useState } from "react";
 
+import { saveChatMessages, startNewChatSession } from "../utils/chatMemory";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 function Icon({ children, className = "" }) {
@@ -41,12 +43,16 @@ export default function LandingPage() {
     setIsSubmitting(true);
 
     try {
+      const sessionId = startNewChatSession();
       const response = await fetch(`${API_BASE_URL}/query/ask`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ query: normalizedQuery }),
+        body: JSON.stringify({
+          query: normalizedQuery,
+          session_id: sessionId,
+        }),
       });
 
       const payload = await response.json();
@@ -58,8 +64,7 @@ export default function LandingPage() {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         result: payload,
       };
-      sessionStorage.setItem("medinsight:lastQueryResult", JSON.stringify(payload));
-      sessionStorage.setItem("medinsight:chatHistory", JSON.stringify([firstMessage]));
+      await saveChatMessages([firstMessage]);
       router.push("/chat-continuation-ai");
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "MedInsight request failed.");
