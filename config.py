@@ -48,8 +48,39 @@ GROQ_MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.1-8b-instant")
 GROQ_GENERATION_CONFIG = {
     "temperature": 0.2,
     "top_p": 0.8,
-    "max_tokens": 700,
+    "max_tokens": 1800,
 }
+
+
+def get_groq_api_key() -> str:
+    """Return the latest configured Groq API key."""
+
+    env_file_key = _read_env_file_value("GROQ_API_KEY")
+    if env_file_key:
+        os.environ["GROQ_API_KEY"] = env_file_key
+        return env_file_key
+
+    _load_environment()
+    return os.getenv("GROQ_API_KEY", "").strip()
+
+
+def _read_env_file_value(key: str) -> str:
+    """Read a single env value directly from project env files."""
+
+    for env_path in (BASE_DIR / ".env", BACKEND_DIR / ".env"):
+        if not env_path.exists():
+            continue
+
+        for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            env_key, value = line.split("=", 1)
+            if env_key.strip() == key:
+                return value.strip().strip("\"'")
+
+    return ""
 
 GEMINI_GENERATION_CONFIG = {
     "temperature": 0.2,

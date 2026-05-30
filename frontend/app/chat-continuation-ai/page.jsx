@@ -13,18 +13,122 @@ const emptyResult = {
   answer: "Submit a query from the MedInsight landing page to generate an evidence-based answer.",
 };
 
-function splitAnswer(answer) {
-  return String(answer || "")
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-}
-
 function makeMessage(result) {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     result,
   };
+}
+
+function parseInlineFormatting(text) {
+  const parts = [];
+  const pattern = /(\*\*[^*]+\*\*|<sup>.*?<\/sup>)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("**")) {
+      parts.push(
+        <strong key={`${match.index}-strong`} className="font-semibold text-on-surface">
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else {
+      parts.push(<sup key={`${match.index}-sup`}>{token.replace(/<\/?sup>/g, "")}</sup>);
+    }
+
+    lastIndex = match.index + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length ? parts : text;
+}
+
+function buildAnswerBlocks(answer) {
+  const blocks = [];
+  let bulletItems = [];
+
+  function flushBullets() {
+    if (!bulletItems.length) return;
+
+    blocks.push({ type: "list", items: bulletItems });
+    bulletItems = [];
+  }
+
+  String(answer || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .forEach((line) => {
+      if (!line) {
+        flushBullets();
+        return;
+      }
+
+      const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        flushBullets();
+        blocks.push({
+          type: "heading",
+          level: headingMatch[1].length,
+          text: headingMatch[2].replace(/#+$/g, "").trim(),
+        });
+        return;
+      }
+
+      const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+      if (bulletMatch) {
+        bulletItems.push(bulletMatch[1]);
+        return;
+      }
+
+      flushBullets();
+      blocks.push({ type: "paragraph", text: line.replace(/^#+\s*/, "") });
+    });
+
+  flushBullets();
+  return blocks;
+}
+
+function AnswerContent({ answer }) {
+  const blocks = buildAnswerBlocks(answer);
+
+  return blocks.map((block, index) => {
+    if (block.type === "heading") {
+      const headingClass =
+        block.level <= 1
+          ? "mt-7 first:mt-0 font-headline-md text-headline-md text-primary"
+          : block.level === 2
+            ? "mt-6 font-headline-sm text-headline-sm text-on-surface"
+            : "mt-4 font-body-md text-body-md font-semibold text-on-surface";
+
+      return (
+        <h2 key={`${block.text}-${index}`} className={headingClass}>
+          {parseInlineFormatting(block.text)}
+        </h2>
+      );
+    }
+
+    if (block.type === "list") {
+      return (
+        <ul key={`list-${index}`} className="ml-5 list-disc space-y-2">
+          {block.items.map((item, itemIndex) => (
+            <li key={`${item}-${itemIndex}`}>{parseInlineFormatting(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    return <p key={`${block.text}-${index}`}>{parseInlineFormatting(block.text)}</p>;
+  });
 }
 
 export default function ChatContinuationPage() {
@@ -197,8 +301,6 @@ export default function ChatContinuationPage() {
 }
 
 function ChatTurn({ result }) {
-  const answerParagraphs = splitAnswer(result.answer);
-
   return (
     <section className="flex flex-col gap-6 border-b border-outline-variant pb-12 last:border-b-0">
       <h1 className="font-headline-md text-headline-md tracking-normal text-on-surface">
@@ -206,9 +308,7 @@ function ChatTurn({ result }) {
       </h1>
 
       <article className="space-y-4 font-body-md text-body-md leading-relaxed text-on-surface">
-        {answerParagraphs.map((paragraph) => (
-          <p key={paragraph}>{paragraph}</p>
-        ))}
+        <AnswerContent answer={result.answer} />
       </article>
     </section>
   );

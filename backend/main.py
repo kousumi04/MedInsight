@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from backend.query_engine.userquery_embedding import create_user_query_embedding
 from backend.query_engine.userquery import process_user_query
-from backend.rag.answering import AnsweringError, fallback_answer, generate_answer
+from backend.rag.answering import AnsweringError, generate_answer
 from backend.rag.database import (
     RagStorageError,
     query_similar_chunks,
@@ -197,9 +197,15 @@ def ask_medinsight(request: AskRequest) -> dict[str, object]:
         retrieved_chunks = query_similar_chunks(query_embedding, top_k=3)
         try:
             answer = generate_answer(request.query, retrieved_chunks)
-        except AnsweringError:
-            logger.exception("Falling back to extractive answer.")
-            answer = fallback_answer(request.query, retrieved_chunks)
+        except AnsweringError as exc:
+            logger.exception("Answer generation failed.")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Answer generation failed. Check GROQ_API_KEY, the groq "
+                    "package, and Groq model settings."
+                ),
+            ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (RuntimeError, RagStorageError, EmbeddingError) as exc:
