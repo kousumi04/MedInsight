@@ -269,11 +269,6 @@ export default function ChatContinuationPage() {
               <ChatTurn key={message.id} result={message.result} />
             ))}
 
-            {isSubmitting ? (
-              <section className="text-on-surface-variant">
-                <p className="font-body-md text-body-md">Searching PubMed and retrieving nearest chunks...</p>
-              </section>
-            ) : null}
             <div ref={scrollRef} />
           </div>
         </main>

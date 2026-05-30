@@ -132,13 +132,16 @@ def should_use_cache(
     if not cache_is_fresh(record):
         return False
 
+    if not get_cached_chunks(record):
+        return False
+
     cached_embedding = record.get("query_embedding") if record else None
     if not isinstance(cached_embedding, list) or not cached_embedding:
         return False
 
     query_terms = _extract_topic_terms(query, cleaned_keywords)
     cached_terms = _extract_cached_topic_terms(record)
-    if query_terms and cached_terms and query_terms & cached_terms:
+    if _has_meaningful_topic_overlap(query_terms, cached_terms):
         return True
 
     try:
@@ -180,6 +183,9 @@ def should_extract_keywords(
         return True
 
     if not cache_is_fresh(cache_record):
+        return True
+
+    if not get_cached_chunks(cache_record):
         return True
 
     history_messages = chat_messages if chat_messages is not None else load_chat_history(
@@ -297,7 +303,7 @@ def is_related_query(
     for previous_query in previous_queries:
         previous_terms |= _extract_topic_terms(previous_query, [])
 
-    if current_terms and previous_terms and current_terms & previous_terms:
+    if _has_meaningful_topic_overlap(current_terms, previous_terms):
         return True
 
     candidate_queries = list(previous_queries)
@@ -417,6 +423,23 @@ def _keyword_overlap_ratio(left: list[str], right: list[str]) -> float:
         return 0.0
 
     return len(left_keywords & right_keywords) / min(len(left_keywords), len(right_keywords))
+
+
+def _has_meaningful_topic_overlap(left: set[str], right: set[str]) -> bool:
+    """Return whether two topic-term sets share a specific enough concept."""
+
+    shared_terms = left & right
+    if not shared_terms:
+        return False
+
+    if any(_is_specific_topic_term(term) for term in shared_terms):
+        return True
+
+    denominator = min(len(left), len(right))
+    if denominator <= 0:
+        return False
+
+    return len(shared_terms) / denominator >= 0.5
 
 
 def _extract_topic_terms(query: str, cleaned_keywords: list[str]) -> set[str]:
@@ -540,13 +563,51 @@ def _normalize_term(term: str) -> str:
         "why",
         "how",
         "about",
+        "advance",
+        "advancements",
+        "advances",
+        "article",
+        "articles",
+        "clinical",
+        "current",
+        "disease",
+        "diseases",
+        "drug",
+        "drugs",
+        "effect",
+        "effects",
+        "medicine",
+        "medicines",
         "new",
         "latest",
+        "paper",
+        "papers",
+        "patient",
+        "patients",
+        "recent",
+        "research",
+        "study",
+        "studies",
         "tell",
         "me",
+        "therapies",
+        "therapy",
+        "treatment",
+        "treatments",
     }:
         return ""
     return normalized
+
+
+def _is_specific_topic_term(term: str) -> bool:
+    """Return whether a normalized term is specific enough to trust alone."""
+
+    return (
+        len(term) >= 5
+        or any(character.isdigit() for character in term)
+        or "-" in term
+        or "+" in term
+    )
 
 
 def _load_local_cache(session_id: str) -> dict[str, Any] | None:

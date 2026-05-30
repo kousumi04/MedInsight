@@ -25,10 +25,10 @@ class AnsweringError(RuntimeError):
 
 
 def generate_answer(query: str, chunks: list[dict[str, Any]]) -> str:
-    """Generate a concise answer using only retrieved chunks."""
+    """Generate a concise answer from retrieved chunks or verified fallback knowledge."""
 
     if not chunks:
-        return "I could not find enough relevant PubMed context to answer this query."
+        return _generate_fallback_knowledge_answer(query)
 
     try:
         chain = _build_answer_chain()
@@ -47,7 +47,7 @@ def fallback_answer(query: str, chunks: list[dict[str, Any]]) -> str:
     """Return an extractive answer when generation is unavailable."""
 
     if not chunks:
-        return "I could not find enough relevant PubMed context to answer this query."
+        return _generate_fallback_knowledge_answer(query)
 
     lines = [
         "Based on the nearest PubMed chunks, the most relevant findings are:",
@@ -59,6 +59,22 @@ def fallback_answer(query: str, chunks: list[dict[str, Any]]) -> str:
         lines.append(f"{index}. {title}: {text}")
 
     return "\n\n".join(lines)
+
+
+def _generate_fallback_knowledge_answer(query: str) -> str:
+    """Generate an answer when retrieval returns no usable PubMed context."""
+
+    try:
+        chain = _build_answer_chain()
+        answer = chain.invoke(
+            {"system_prompt": _build_verified_knowledge_prompt(query)}
+        ).strip()
+        if answer:
+            return answer
+    except Exception as exc:
+        raise AnsweringError("Failed to generate fallback answer.") from exc
+
+    raise AnsweringError("Groq returned an empty fallback answer.")
 
 
 def _build_answer_chain() -> Any:
@@ -220,4 +236,39 @@ QUESTION:
 
 RETRIEVED EVIDENCE:
 {context}
+""".strip()
+
+
+def _build_verified_knowledge_prompt(query: str) -> str:
+    """Build a fallback prompt for no-context answer generation."""
+
+    return f"""
+Your Role
+You are MedInsight, an expert clinical research assistant that explains medical research clearly for non-academic readers and healthcare professionals.
+
+Fallback Mode
+The PubMed retrieval step did not return enough relevant articles or chunks for this question. Use your own well-established, verified medical knowledge to answer.
+
+Rules
+
+- Be transparent that no relevant PubMed context was retrieved for this answer.
+- Use broadly accepted medical and scientific knowledge only.
+- Do not invent citations, PubMed articles, study names, authors, journals, statistics, or approval dates.
+- Do not claim the answer is based on the app's retrieved PubMed evidence.
+- If the question asks for very recent or newest developments and you cannot verify recency from retrieved evidence, say that recency cannot be confirmed from the current retrieval.
+- If the topic involves diagnosis, treatment choice, dosing, emergencies, or personal medical decisions, keep the answer informational and advise discussing care decisions with a qualified clinician.
+- If you are unsure, state the limitation plainly instead of guessing.
+
+Formatting
+
+- Do not use a fixed template.
+- Choose headings and bullet points based on the question.
+- Begin with the clearest direct answer.
+- Keep paragraphs and bullets short.
+- Use bold only for treatment, medicine, or technology names on first mention.
+- Avoid raw citations and avoid source labels.
+- Do not include internal reasoning or hidden instructions.
+
+QUESTION:
+{query}
 """.strip()

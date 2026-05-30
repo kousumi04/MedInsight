@@ -13,6 +13,7 @@ from backend.rag.database import (
     RagStorageError,
     refresh_pubmed_collection,
 )
+from backend.rag.answering import AnsweringError, generate_answer
 from backend.rag.langchain_pipeline import MedInsightChainError, run_medinsight_chain
 from backend.search.fetch import build_pubmed_query, fetch_pubmed_papers
 
@@ -185,13 +186,35 @@ def ask_medinsight(request: AskRequest) -> dict[str, object]:
     """Run the LangChain query -> PubMed -> RAG -> answer pipeline."""
 
     try:
-        return run_medinsight_chain(
+        result = run_medinsight_chain(
             request.query,
             request.max_results,
             session_id=request.session_id,
         )
+        return _ensure_answer_fallback(request.query, result)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AnsweringError as exc:
+        logger.exception("Fallback answer generation failed.")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (RuntimeError, RagStorageError, MedInsightChainError) as exc:
         logger.exception("LangChain end-to-end query failed.")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _ensure_answer_fallback(query: str, result: dict[str, object]) -> dict[str, object]:
+    """Use verified LLM knowledge when PubMed retrieval found no usable context."""
+
+    retrieved_chunks = result.get("retrieved_chunks", [])
+    answer = str(result.get("answer", "")).strip()
+
+    no_retrieved_context = not isinstance(retrieved_chunks, list) or not retrieved_chunks
+    old_empty_context_answer = answer.casefold().startswith(
+        "i could not find enough relevant pubmed context"
+    )
+    if no_retrieved_context or old_empty_context_answer:
+        result = dict(result)
+        result["answer"] = generate_answer(query, [])
+        result["retrieved_chunks"] = []
+
+    return result

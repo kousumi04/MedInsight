@@ -19,7 +19,7 @@ from backend.rag.cache import (
     is_related_query,
     load_chat_history,
     load_cache_record,
-    should_extract_keywords,
+    should_use_cache,
     store_cache_record,
 )
 from backend.rag.answering import generate_answer
@@ -70,17 +70,17 @@ def _prepare_query_context(
         if source_query:
             previous_queries = [source_query]
 
-    should_extract = should_extract_keywords(
-        str(state["query"]),
-        normalized_session_id,
-        cache_record=cache_record,
-        chat_messages=chat_messages,
-    )
     related_to_history = is_related_query(
         str(state["query"]),
         previous_queries,
         cache_record,
     )
+    use_cached_chunks = should_use_cache(
+        str(state["query"]),
+        [],
+        cache_record,
+    )
+    should_extract = not use_cached_chunks
 
     if should_extract:
         keyword_result = process_user_query(str(state["query"]))
@@ -113,7 +113,7 @@ def _prepare_query_context(
         "keyword_result": keyword_result,
         "extracted_keywords": extracted_keywords,
         "cleaned_keywords": cleaned_keywords,
-        "use_cached_chunks": related_to_history and cache_is_fresh(cache_record),
+        "use_cached_chunks": use_cached_chunks,
     }
 
 
@@ -158,11 +158,21 @@ def _refresh_and_retrieve(state: dict[str, Any]) -> dict[str, Any]:
     if state.get("cache_source") == "supabase_cache":
         return state
 
+    if state.get("cache_source") == "no_keywords" or not state.get("papers"):
+        return {
+            **state,
+            "retrieved_chunks": [],
+        }
+
     refresh_pubmed_collection({"papers": state["papers"]})
     refreshed_state = {
         **state,
         "retrieved_chunks": retrieve_similar_chunks(str(state["query"]), top_k=3),
     }
+    retrieved_chunks = list(refreshed_state.get("retrieved_chunks", []))
+    if not retrieved_chunks:
+        return refreshed_state
+
     session_id = str(state.get("session_id") or "").strip()
     if session_id:
         try:
@@ -172,7 +182,7 @@ def _refresh_and_retrieve(state: dict[str, Any]) -> dict[str, Any]:
                 cleaned_keywords=list(state.get("cleaned_keywords", [])),
                 pubmed_query=str(refreshed_state.get("pubmed_query", "")),
                 papers=list(refreshed_state.get("papers", [])),
-                retrieved_chunks=list(refreshed_state.get("retrieved_chunks", [])),
+                retrieved_chunks=retrieved_chunks,
             )
         except ChatCacheError:
             logger.warning(
