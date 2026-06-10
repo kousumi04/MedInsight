@@ -307,6 +307,9 @@ def is_related_query(
     if _has_meaningful_topic_overlap(current_terms, previous_terms):
         return True
 
+    if cache_record and _looks_like_follow_up(normalized_query) and not current_terms:
+        return bool(get_cached_chunks(cache_record))
+
     candidate_queries = list(previous_queries)
     if cache_record:
         source_query = str(cache_record.get("source_query", "")).strip()
@@ -509,6 +512,12 @@ def _looks_like_follow_up(query: str) -> bool:
     lowered = query.casefold()
     return lowered.startswith(
         (
+            "explain",
+            "summarize",
+            "summary",
+            "list",
+            "give me",
+            "make it",
             "what about",
             "and ",
             "also ",
@@ -521,12 +530,21 @@ def _looks_like_follow_up(query: str) -> bool:
             "what are the side effects",
             "what about side effects",
             "can you explain",
+            "can you summarize",
             "how does it",
             "what is the mechanism",
         )
     ) or any(
         phrase in lowered
         for phrase in (
+            "in points",
+            "key points",
+            "main points",
+            "five points",
+            "5 points",
+            "bullet points",
+            "short answer",
+            "briefly",
             "side effects",
             "safety",
             "dosage",
@@ -591,6 +609,21 @@ def _normalize_term(term: str) -> str:
         "studies",
         "tell",
         "me",
+        "explain",
+        "summarize",
+        "summary",
+        "list",
+        "give",
+        "key",
+        "main",
+        "point",
+        "points",
+        "five",
+        "brief",
+        "briefly",
+        "therapeutic",
+        "strategy",
+        "strategies",
         "therapies",
         "therapy",
         "treatment",

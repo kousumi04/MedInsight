@@ -75,7 +75,11 @@ def _prepare_query_context(
         previous_queries,
         cache_record,
     )
-    use_cached_chunks = should_use_cache(
+    cache_ready = cache_is_fresh(cache_record) and bool(get_cached_chunks(cache_record))
+    use_cached_chunks = (
+        cache_ready
+        and related_to_history
+    ) or should_use_cache(
         str(state["query"]),
         [],
         cache_record,
