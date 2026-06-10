@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 import threading
 from datetime import datetime, timezone
@@ -11,6 +12,10 @@ from typing import Any
 import requests
 
 from config import (
+    GEMINI_API_KEY,
+    GEMINI_GENERATION_CONFIG,
+    GEMINI_MODEL_NAME,
+    GEMINI_SAFETY_SETTINGS,
     MEDINSIGHT_CACHE_SIMILARITY_THRESHOLD,
     MEDINSIGHT_CACHE_TTL_SECONDS,
     MEDINSIGHT_RELATED_QUERY_FOLLOW_UP_THRESHOLD,
@@ -21,6 +26,11 @@ from config import (
     SUPABASE_URL,
 )
 from backend.rag.embedding import embed_texts
+
+try:
+    import google.generativeai as genai
+except ImportError:  # pragma: no cover - only reached before dependency install.
+    genai = None  # type: ignore[assignment]
 
 
 CACHE_TABLE = "medinsight_chat_cache"
@@ -300,6 +310,14 @@ def is_related_query(
         return False
 
     previous_queries = previous_queries[-RELATED_QUERY_LOOKBACK:]
+    llm_decision = _classify_query_continuation(
+        normalized_query,
+        previous_queries,
+        cache_record,
+    )
+    if llm_decision is not None:
+        return llm_decision
+
     current_terms = _extract_topic_terms(normalized_query, [])
     previous_terms = set()
     for previous_query in previous_queries:
@@ -424,6 +442,122 @@ def _query_similarity(left_query: str, right_query: str) -> float:
         return len(left_terms & right_terms) / min(len(left_terms), len(right_terms))
 
     return 0.0
+
+
+def _classify_query_continuation(
+    query: str,
+    previous_queries: list[str],
+    cache_record: dict[str, Any] | None = None,
+) -> bool | None:
+    """Use Gemini to decide whether the query continues the cached topic."""
+
+    if genai is None or not GEMINI_API_KEY:
+        return None
+
+    cached_chunks = get_cached_chunks(cache_record)
+    if cache_record and not cached_chunks:
+        return None
+
+    prompt = _build_continuation_prompt(query, previous_queries, cache_record)
+    generation_config = dict(GEMINI_GENERATION_CONFIG)
+    generation_config["max_output_tokens"] = 96
+    generation_config["temperature"] = 0
+
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL_NAME,
+            generation_config=generation_config,
+            safety_settings=GEMINI_SAFETY_SETTINGS,
+        )
+        response = model.generate_content(prompt)
+        response_text = getattr(response, "text", "") or ""
+        payload = json.loads(_strip_markdown_fence(response_text))
+    except Exception:
+        return None
+
+    decision = str(payload.get("decision", "")).strip().casefold()
+    if decision == "follow_up":
+        return True
+    if decision == "new_topic":
+        return False
+    return None
+
+
+def _build_continuation_prompt(
+    query: str,
+    previous_queries: list[str],
+    cache_record: dict[str, Any] | None = None,
+) -> str:
+    """Build a compact classifier prompt for topic-continuation routing."""
+
+    source_query = ""
+    topic_terms: list[str] = []
+    chunk_titles: list[str] = []
+    if cache_record:
+        source_query = str(cache_record.get("source_query", "")).strip()
+        topic_terms = [
+            str(term).strip()
+            for term in cache_record.get("topic_terms", []) or []
+            if str(term).strip()
+        ][:12]
+        for chunk in get_cached_chunks(cache_record)[:5]:
+            metadata = chunk.get("metadata", {}) or {}
+            title = str(metadata.get("title", "")).strip()
+            if title:
+                chunk_titles.append(title)
+
+    previous_query_lines = "\n".join(
+        f"- {previous_query}" for previous_query in previous_queries[-RELATED_QUERY_LOOKBACK:]
+    )
+    topic_term_line = ", ".join(topic_terms) if topic_terms else "None"
+    title_lines = "\n".join(f"- {title}" for title in chunk_titles) or "None"
+
+    return f"""
+You classify whether a user's new medical chat query should reuse the previous PubMed/RAG context or start a fresh PubMed search.
+
+Return ONLY valid JSON in this exact shape:
+{{"decision": "follow_up" | "new_topic"}}
+
+Choose "follow_up" when:
+- The new query asks to reformat, summarize, shorten, expand, explain, compare, or list the prior answer.
+- The new query asks about side effects, mechanism, safety, dosing, efficacy, limitations, or details of the same disease, treatment, drug, biomarker, or paper context.
+- The new query is conversationally incomplete and depends on the previous topic.
+
+Choose "new_topic" when:
+- The new query introduces a different disease, organ system, treatment area, drug class, or research topic.
+- The new query can stand alone as a new medical research question unrelated to the previous topic.
+
+Previous user queries:
+{previous_query_lines}
+
+Cached source query:
+{source_query or "None"}
+
+Cached topic terms:
+{topic_term_line}
+
+Cached evidence titles:
+{title_lines}
+
+New user query:
+{query}
+""".strip()
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """Remove common ```json fences before JSON parsing."""
+
+    stripped = text.strip()
+    fenced_match = re.fullmatch(
+        r"```(?:json)?\s*(?P<body>.*?)\s*```",
+        stripped,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fenced_match:
+        return fenced_match.group("body").strip()
+
+    return stripped
 
 
 def _keyword_overlap_ratio(left: list[str], right: list[str]) -> float:
@@ -626,7 +760,12 @@ def _normalize_term(term: str) -> str:
         "main",
         "point",
         "points",
+        "bullet",
+        "bullets",
+        "bulleted",
         "five",
+        "format",
+        "formatted",
         "brief",
         "briefly",
         "therapeutic",
