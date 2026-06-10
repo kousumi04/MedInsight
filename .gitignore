@@ -20,6 +20,9 @@ dist/
 wheels/
 *.egg-info/
 *.egg
+*.dockerbuild
+*.image.tar
+*.oci.tar
 .next/
 frontend/.next/
 out/
@@ -49,6 +52,7 @@ ENV/
 *.log
 logs/
 *.pid
+*.pid.lock
 dev-server*.log
 npm-debug.log*
 yarn-debug.log*
@@ -60,6 +64,8 @@ node_modules/
 
 # Local databases and generated RAG/search artifacts
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 data/
@@ -68,6 +74,8 @@ vector_store/
 chroma/
 backend/chroma/
 .chroma/
+docker-data/
+.docker/
 faiss_index/
 *.index
 *.parquet

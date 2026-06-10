@@ -3,5 +3,19 @@ name = "backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "biopython",
+    "chromadb",
+    "fastapi",
+    "google-generativeai",
+    "groq",
+    "langchain",
+    "langchain-chroma",
+    "langchain-core",
+    "langchain-groq",
+    "pydantic",
+    "python-dotenv",
+    "requests",
+    "uvicorn",
+]
