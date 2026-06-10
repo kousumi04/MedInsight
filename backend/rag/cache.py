@@ -310,13 +310,13 @@ def is_related_query(
         return False
 
     previous_queries = previous_queries[-RELATED_QUERY_LOOKBACK:]
-    llm_decision = _classify_query_continuation(
+    topic_shift = detect_topic_shift(
         normalized_query,
         previous_queries,
         cache_record,
     )
-    if llm_decision is not None:
-        return llm_decision
+    if topic_shift is not None:
+        return not topic_shift
 
     current_terms = _extract_topic_terms(normalized_query, [])
     previous_terms = set()
@@ -444,12 +444,16 @@ def _query_similarity(left_query: str, right_query: str) -> float:
     return 0.0
 
 
-def _classify_query_continuation(
+def detect_topic_shift(
     query: str,
     previous_queries: list[str],
     cache_record: dict[str, Any] | None = None,
 ) -> bool | None:
-    """Use Gemini to decide whether the query continues the cached topic."""
+    """Use Gemini to decide whether the new query starts a different topic.
+
+    Returns True for topic shift, False for same topic, and None when Gemini is
+    unavailable or the response cannot be parsed.
+    """
 
     if genai is None or not GEMINI_API_KEY:
         return None
@@ -458,38 +462,77 @@ def _classify_query_continuation(
     if cache_record and not cached_chunks:
         return None
 
-    prompt = _build_continuation_prompt(query, previous_queries, cache_record)
+    prompt = _build_topic_shift_prompt(query, previous_queries, cache_record)
     generation_config = dict(GEMINI_GENERATION_CONFIG)
-    generation_config["max_output_tokens"] = 96
+    generation_config["max_output_tokens"] = 1024
     generation_config["temperature"] = 0
+    generation_config["response_mime_type"] = "application/json"
 
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL_NAME,
+            model_name=_resolve_gemini_generation_model(),
             generation_config=generation_config,
             safety_settings=GEMINI_SAFETY_SETTINGS,
         )
         response = model.generate_content(prompt)
         response_text = getattr(response, "text", "") or ""
-        payload = json.loads(_strip_markdown_fence(response_text))
+        payload = json.loads(_extract_json_object(response_text))
     except Exception:
         return None
 
     decision = str(payload.get("decision", "")).strip().casefold()
-    if decision == "follow_up":
-        return True
-    if decision == "new_topic":
+    if decision == "same_topic":
         return False
+    if decision == "topic_shift":
+        return True
     return None
 
 
-def _build_continuation_prompt(
+def _resolve_gemini_generation_model() -> str:
+    """Return a Gemini model that supports generateContent."""
+
+    available_models = _list_gemini_generation_models()
+    configured_model_names = {
+        GEMINI_MODEL_NAME,
+        f"models/{GEMINI_MODEL_NAME}" if not GEMINI_MODEL_NAME.startswith("models/") else GEMINI_MODEL_NAME,
+    }
+    if not available_models or configured_model_names & set(available_models):
+        return GEMINI_MODEL_NAME
+
+    preferred_models = [
+        "models/gemini-2.5-flash",
+        "models/gemini-2.0-flash",
+        "models/gemini-2.0-flash-lite",
+        "models/gemini-1.5-flash",
+    ]
+    for model_name in preferred_models:
+        if model_name in available_models:
+            return model_name
+
+    return available_models[0]
+
+
+def _list_gemini_generation_models() -> list[str]:
+    """List Gemini models that support generateContent."""
+
+    try:
+        return [
+            model.name
+            for model in genai.list_models()
+            if "generateContent"
+            in (getattr(model, "supported_generation_methods", []) or [])
+        ]
+    except Exception:
+        return []
+
+
+def _build_topic_shift_prompt(
     query: str,
     previous_queries: list[str],
     cache_record: dict[str, Any] | None = None,
 ) -> str:
-    """Build a compact classifier prompt for topic-continuation routing."""
+    """Build a compact classifier prompt for topic-shift routing."""
 
     source_query = ""
     topic_terms: list[str] = []
@@ -514,17 +557,17 @@ def _build_continuation_prompt(
     title_lines = "\n".join(f"- {title}" for title in chunk_titles) or "None"
 
     return f"""
-You classify whether a user's new medical chat query should reuse the previous PubMed/RAG context or start a fresh PubMed search.
+You classify whether a user's new medical chat query is the same topic as the cached PubMed/RAG context or a topic shift that requires a fresh PubMed search.
 
 Return ONLY valid JSON in this exact shape:
-{{"decision": "follow_up" | "new_topic"}}
+{{"decision": "same_topic" | "topic_shift"}}
 
-Choose "follow_up" when:
+Choose "same_topic" when:
 - The new query asks to reformat, summarize, shorten, expand, explain, compare, or list the prior answer.
 - The new query asks about side effects, mechanism, safety, dosing, efficacy, limitations, or details of the same disease, treatment, drug, biomarker, or paper context.
 - The new query is conversationally incomplete and depends on the previous topic.
 
-Choose "new_topic" when:
+Choose "topic_shift" when:
 - The new query introduces a different disease, organ system, treatment area, drug class, or research topic.
 - The new query can stand alone as a new medical research question unrelated to the previous topic.
 
@@ -556,6 +599,20 @@ def _strip_markdown_fence(text: str) -> str:
     )
     if fenced_match:
         return fenced_match.group("body").strip()
+
+    return stripped
+
+
+def _extract_json_object(text: str) -> str:
+    """Extract a JSON object from plain or fenced model output."""
+
+    stripped = _strip_markdown_fence(text)
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+
+    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    if match:
+        return match.group(0)
 
     return stripped
 

@@ -33,7 +33,7 @@ def _load_simple_env_file(env_path: Path) -> None:
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
             continue
 
-        value = value.strip().strip("\"'")
+        value = _normalize_env_value(value)
         os.environ.setdefault(key, value)
 
 
@@ -63,6 +63,23 @@ def _get_bool_env(key: str, default: bool = False) -> bool:
         return default
 
     return value.casefold() in {"1", "true", "yes", "on"}
+
+
+def _normalize_env_value(value: str) -> str:
+    """Normalize simple .env values and remove unquoted inline comments."""
+
+    value = value.strip()
+    if not value:
+        return ""
+
+    quote = value[0]
+    if quote in {"\"", "'"}:
+        end_index = value.find(quote, 1)
+        if end_index != -1:
+            return value[1:end_index]
+        return value.strip(quote)
+
+    return re.split(r"\s+#", value, maxsplit=1)[0].strip()
 
 
 _load_environment()
@@ -107,7 +124,7 @@ def _read_env_file_value(key: str, env_paths: tuple[Path, ...] | None = None) ->
 
             env_key, value = line.split("=", 1)
             if env_key.strip() == key:
-                return value.strip().strip("\"'")
+                return _normalize_env_value(value)
 
     return ""
 

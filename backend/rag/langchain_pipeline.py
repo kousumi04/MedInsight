@@ -14,6 +14,7 @@ from backend.query_engine.userquery import process_user_query
 from backend.rag.cache import (
     ChatCacheError,
     cache_is_fresh,
+    detect_topic_shift,
     extract_chat_queries,
     get_cached_chunks,
     is_related_query,
@@ -62,7 +63,11 @@ def _prepare_query_context(
     """Load cache context and decide whether keyword extraction is needed."""
 
     normalized_session_id = str(session_id or "").strip()
-    cache_record = load_cache_record(normalized_session_id) if normalized_session_id else None
+    cache_record = (
+        load_cache_record(normalized_session_id, prefer_local=False)
+        if normalized_session_id
+        else None
+    )
     chat_messages = load_chat_history(normalized_session_id) if normalized_session_id else []
     previous_queries = extract_chat_queries(chat_messages)
     if not previous_queries and isinstance(cache_record, dict):
@@ -70,20 +75,35 @@ def _prepare_query_context(
         if source_query:
             previous_queries = [source_query]
 
-    related_to_history = is_related_query(
-        str(state["query"]),
-        previous_queries,
-        cache_record,
-    )
     cache_ready = cache_is_fresh(cache_record) and bool(get_cached_chunks(cache_record))
-    use_cached_chunks = (
-        cache_ready
-        and related_to_history
-    ) or should_use_cache(
-        str(state["query"]),
-        [],
-        cache_record,
-    )
+    topic_shift = None
+    if cache_ready and previous_queries:
+        topic_shift = detect_topic_shift(
+            str(state["query"]),
+            previous_queries,
+            cache_record,
+        )
+
+    if topic_shift is True:
+        related_to_history = False
+        use_cached_chunks = False
+    elif topic_shift is False:
+        related_to_history = True
+        use_cached_chunks = True
+    else:
+        related_to_history = is_related_query(
+            str(state["query"]),
+            previous_queries,
+            cache_record,
+        )
+        use_cached_chunks = (
+            cache_ready
+            and related_to_history
+        ) or should_use_cache(
+            str(state["query"]),
+            [],
+            cache_record,
+        )
     should_extract = not use_cached_chunks
 
     if should_extract:
@@ -113,6 +133,7 @@ def _prepare_query_context(
         "chat_messages": chat_messages,
         "previous_queries": previous_queries,
         "related_to_history": related_to_history,
+        "topic_shift": topic_shift,
         "should_extract_keywords": should_extract,
         "keyword_result": keyword_result,
         "extracted_keywords": extracted_keywords,
