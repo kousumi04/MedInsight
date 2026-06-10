@@ -42,11 +42,18 @@ ENV/
 # Local environment and secrets
 .env
 .env.*
-!.env.example
-!**/.env.example
+!frontend/.env.example
+*.env
+*.env.*
 *.pem
 *.key
 *.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+.secrets/
 
 # Logs and runtime files
 *.log
@@ -61,6 +68,9 @@ pnpm-debug.log*
 
 # Node dependencies
 node_modules/
+.npm/
+.pnpm-store/
+.yarn/
 
 # Local databases and generated RAG/search artifacts
 *.db
@@ -81,6 +91,9 @@ faiss_index/
 *.parquet
 tmp/
 temp/
+.cache/
+.huggingface/
+hf_cache/
 
 # Nested repository backup created while flattening backend into root repo
 backend/.git-backup-nested-repo/
