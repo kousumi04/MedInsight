@@ -17,6 +17,7 @@ from config import (
     MEDINSIGHT_RELATED_QUERY_LOOKBACK,
     MEDINSIGHT_RELATED_QUERY_SIMILARITY_THRESHOLD,
     SUPABASE_PUBLISHABLE_KEY,
+    SUPABASE_SERVICE_KEY,
     SUPABASE_URL,
 )
 from backend.rag.embedding import embed_texts
@@ -337,20 +338,27 @@ def is_related_query(
 def _cache_enabled() -> bool:
     """Return whether Supabase credentials are available."""
 
-    return bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY)
+    return bool(SUPABASE_URL and _supabase_backend_key())
 
 
 def _supabase_headers() -> dict[str, str]:
     """Return headers needed for Supabase REST requests."""
 
+    backend_key = _supabase_backend_key()
     return {
-        "apikey": SUPABASE_PUBLISHABLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_PUBLISHABLE_KEY}",
+        "apikey": backend_key,
+        "Authorization": f"Bearer {backend_key}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Accept-Profile": "public",
         "Content-Profile": "public",
     }
+
+
+def _supabase_backend_key() -> str:
+    """Use the server-only service key for backend cache calls when available."""
+
+    return SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY
 
 
 def _parse_timestamp(value: str) -> datetime | None:

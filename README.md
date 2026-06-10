@@ -48,8 +48,10 @@ Set these Space secrets:
 - `PUBMED_EMAIL`
 - `PUBMED_API_KEY` if you have one
 - `CHROMA_API_KEY`, `CHROMA_TENANT`, and `CHROMA_DATABASE` for Chroma Cloud
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_KEY`
 
-Optional backend variables are listed in `.env.example`.
+Optional backend variables use the same names as the local `.env` file.
 
 Docker requirements used by the Space:
 
