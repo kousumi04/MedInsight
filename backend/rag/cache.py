@@ -353,10 +353,23 @@ def is_related_query(
     return False
 
 
+_CACHE_ENABLED_WARNED = False
+
+
 def _cache_enabled() -> bool:
     """Return whether Supabase credentials are available."""
 
-    return bool(SUPABASE_URL and _supabase_backend_key())
+    global _CACHE_ENABLED_WARNED
+    enabled = bool(SUPABASE_URL and _supabase_backend_key())
+    if not enabled and not _CACHE_ENABLED_WARNED:
+        _CACHE_ENABLED_WARNED = True
+        logger.warning(
+            "Supabase cache is DISABLED: SUPABASE_URL=%r, service key present=%r. "
+            "Chat memory and RAG cache will not persist.",
+            bool(SUPABASE_URL),
+            bool(_supabase_backend_key()),
+        )
+    return enabled
 
 
 def _supabase_headers() -> dict[str, str]:

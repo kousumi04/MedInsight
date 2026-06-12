@@ -133,7 +133,14 @@ def _read_env_value_with_fallback(
     primary_keys: tuple[str, ...],
     secondary_keys: tuple[str, ...] = (),
 ) -> str:
-    """Read the first matching env value from a set of keys and paths."""
+    """Read the first matching env value from a set of keys and paths.
+
+    Resolution order:
+    1. Primary keys read from .env files (frontend/.env.local, .env, backend/.env)
+    2. Secondary keys read from .env files
+    3. Primary keys from os.environ (covers Docker / HF Spaces secrets with no .env files)
+    4. Secondary keys from os.environ
+    """
 
     for key in primary_keys:
         value = _read_env_file_value(
@@ -159,7 +166,16 @@ def _read_env_value_with_fallback(
         if value:
             return value
 
+    # Final fallback: read directly from the process environment.
+    # This covers containerised deployments (Docker, HF Spaces) where secrets
+    # are injected as OS environment variables and no .env files exist on disk.
+    for key in (*primary_keys, *secondary_keys):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+
     return ""
+
 
 GEMINI_GENERATION_CONFIG = {
     "temperature": 0.2,
@@ -176,7 +192,7 @@ SUPABASE_PUBLISHABLE_KEY = _read_env_value_with_fallback(
     ("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_PUBLISHABLE_KEY"),
 )
 SUPABASE_SERVICE_KEY = _read_env_value_with_fallback(
-    ("SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
+    ("NEXT_PUBLIC_SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
 )
 
 if SUPABASE_URL:
@@ -187,6 +203,7 @@ if SUPABASE_PUBLISHABLE_KEY:
     os.environ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"] = SUPABASE_PUBLISHABLE_KEY
 if SUPABASE_SERVICE_KEY:
     os.environ["SUPABASE_SERVICE_KEY"] = SUPABASE_SERVICE_KEY
+    os.environ["NEXT_PUBLIC_SUPABASE_SERVICE_KEY"] = SUPABASE_SERVICE_KEY
 
 PUBMED_EMAIL = os.getenv("PUBMED_EMAIL", "")
 PUBMED_TOOL_NAME = os.getenv("PUBMED_TOOL_NAME", "medinsight")
