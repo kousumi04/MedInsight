@@ -15,6 +15,7 @@ from backend.rag.cache import (
     ChatCacheError,
     cache_is_fresh,
     detect_topic_shift,
+    extract_chat_answers,
     extract_chat_queries,
     get_cached_chunks,
     is_related_query,
@@ -23,7 +24,7 @@ from backend.rag.cache import (
     should_use_cache,
     store_cache_record,
 )
-from backend.rag.answering import generate_answer
+from backend.rag.answering import generate_answer, generate_answer_from_history
 from backend.rag.database import refresh_pubmed_collection, retrieve_similar_chunks
 from backend.search.fetch import build_pubmed_query, fetch_pubmed_papers
 
@@ -217,9 +218,28 @@ def _refresh_and_retrieve(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _generate_answer(state: dict[str, Any]) -> dict[str, Any]:
-    """Generate the final grounded answer from retrieved chunks."""
+    """Generate the final grounded answer from retrieved chunks.
 
-    answer = generate_answer(str(state["query"]), state["retrieved_chunks"])
+    When the query is a follow-up (related_to_history=True) but no PubMed
+    chunks are available, the previous answer text from chat history is used
+    as context so that requests like 'summarize in 5 bullet points' stay
+    on-topic instead of generating a random knowledge-based answer.
+    """
+
+    retrieved_chunks = state["retrieved_chunks"]
+    related_to_history = state.get("related_to_history", False)
+    chat_messages = state.get("chat_messages", [])
+
+    if related_to_history and not retrieved_chunks and chat_messages:
+        previous_answers = extract_chat_answers(chat_messages)
+        answer = generate_answer_from_history(
+            str(state["query"]),
+            previous_answers,
+            retrieved_chunks,
+        )
+    else:
+        answer = generate_answer(str(state["query"]), retrieved_chunks)
+
     keyword_result = state["keyword_result"]
     return {
         "original_query": keyword_result["original_query"],
@@ -227,6 +247,6 @@ def _generate_answer(state: dict[str, Any]) -> dict[str, Any]:
         "cleaned_keywords": state["cleaned_keywords"],
         "pubmed_query": state["pubmed_query"],
         "papers": state["papers"],
-        "retrieved_chunks": state["retrieved_chunks"],
+        "retrieved_chunks": retrieved_chunks,
         "answer": answer,
     }

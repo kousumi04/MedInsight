@@ -43,6 +43,43 @@ def generate_answer(query: str, chunks: list[dict[str, Any]]) -> str:
     raise AnsweringError("Groq returned an empty answer.")
 
 
+def generate_answer_from_history(
+    query: str,
+    previous_answers: list[str],
+    chunks: list[dict[str, Any]],
+) -> str:
+    """Generate an answer for a follow-up query using prior answer text as context.
+
+    When PubMed retrieval produced no chunks on a previous turn (so nothing was
+    cached), this function feeds the stored answer text back to the LLM so that
+    follow-up requests like 'summarize in 5 bullet points' still produce a
+    coherent, on-topic response.
+
+    Falls back to chunk-based or knowledge-based generation when no history is
+    available.
+    """
+
+    if chunks:
+        return generate_answer(query, chunks)
+
+    if not previous_answers:
+        return _generate_fallback_knowledge_answer(query)
+
+    try:
+        chain = _build_answer_chain()
+        answer = chain.invoke(
+            {"system_prompt": _build_history_context_prompt(query, previous_answers)}
+        ).strip()
+        if answer:
+            return answer
+    except Exception as exc:
+        raise AnsweringError("Failed to generate answer from chat history context.") from exc
+
+    return _generate_fallback_knowledge_answer(query)
+
+
+
+
 def fallback_answer(query: str, chunks: list[dict[str, Any]]) -> str:
     """Return an extractive answer when generation is unavailable."""
 
@@ -270,5 +307,36 @@ Formatting
 - Do not include internal reasoning or hidden instructions.
 
 QUESTION:
+{query}
+""".strip()
+
+
+def _build_history_context_prompt(query: str, previous_answers: list[str]) -> str:
+    """Build a prompt that uses prior answer text as context for a follow-up query."""
+
+    # Use only the most recent answer to keep the prompt focused
+    prior_answer = previous_answers[-1] if previous_answers else ""
+
+    return f"""
+Your Role
+You are MedInsight, an expert clinical research assistant. You are continuing a conversation with a user.
+
+Context
+The user has already received an answer in this conversation. They are now asking a follow-up question about that prior answer. Use the prior answer below as your sole context to respond.
+
+PRIOR ANSWER FROM THIS CONVERSATION:
+{prior_answer}
+
+Rules
+- Answer the follow-up question using ONLY the content in the prior answer above.
+- Do not introduce new medical facts, drugs, studies, or topics not present in the prior answer.
+- Do not invent citations or statistics.
+- If the follow-up asks for a summary, bullet points, or a reformatted version, produce it faithfully from the prior answer content.
+- If the follow-up asks about something not covered in the prior answer, say so directly.
+- Keep the response concise and well-formatted.
+- Use bullet points for lists.
+- Use bold only for treatment or drug names on first mention.
+
+FOLLOW-UP QUESTION:
 {query}
 """.strip()

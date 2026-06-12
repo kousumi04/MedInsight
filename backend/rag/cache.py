@@ -298,6 +298,29 @@ def extract_chat_queries(messages: list[dict[str, Any]] | None) -> list[str]:
     return queries
 
 
+def extract_chat_answers(messages: list[dict[str, Any]] | None) -> list[str]:
+    """Extract previous answer texts from stored chat messages.
+
+    Used to provide conversational context for follow-up queries when no
+    PubMed chunks were cached (e.g. the prior search returned no results).
+    """
+
+    if not messages:
+        return []
+
+    answers: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        result = message.get("result")
+        if isinstance(result, dict):
+            answer = str(result.get("answer", "")).strip()
+            if answer:
+                answers.append(answer)
+
+    return answers
+
+
 def is_related_query(
     query: str,
     previous_queries: list[str],
