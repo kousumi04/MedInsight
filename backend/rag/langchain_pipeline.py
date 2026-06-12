@@ -40,6 +40,7 @@ def run_medinsight_chain(
     query: str,
     max_results: int,
     session_id: str | None = None,
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the end-to-end MedInsight flow through a LangChain runnable chain."""
 
@@ -49,7 +50,7 @@ def run_medinsight_chain(
         )
 
     chain = (
-        RunnableLambda(lambda state: _prepare_query_context(state, session_id))
+        RunnableLambda(lambda state: _prepare_query_context(state, session_id, conversation_history or []))
         | RunnableLambda(lambda state: _fetch_pubmed_papers(state, max_results))
         | RunnableLambda(_refresh_and_retrieve)
         | RunnableLambda(_generate_answer)
@@ -60,8 +61,16 @@ def run_medinsight_chain(
 def _prepare_query_context(
     state: dict[str, Any],
     session_id: str | None,
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Load cache context and decide whether keyword extraction is needed."""
+    """Load cache context and decide whether keyword extraction is needed.
+
+    ``conversation_history`` is the list of prior turns supplied directly by
+    the frontend (last ≤5 messages).  It is merged with whatever
+    ``load_chat_history`` returns from Supabase so that context is available
+    even when the Supabase write from the previous turn hasn't landed yet, or
+    when PubMed returned no chunks (so nothing was written to the cache table).
+    """
 
     normalized_session_id = str(session_id or "").strip()
     cache_record = (
@@ -69,7 +78,28 @@ def _prepare_query_context(
         if normalized_session_id
         else None
     )
-    chat_messages = load_chat_history(normalized_session_id) if normalized_session_id else []
+
+    # Merge frontend-supplied history with Supabase history.
+    # Frontend history takes precedence (it's always fresh); Supabase history
+    # fills in any turns the frontend didn't include.
+    supabase_messages = load_chat_history(normalized_session_id) if normalized_session_id else []
+    supplied_history = list(conversation_history or [])
+
+    # Build a de-duplicated merged list: frontend turns first, then any
+    # Supabase turns whose original_query isn't already covered.
+    supplied_queries = {
+        str((m.get("result") or {}).get("original_query", "")).strip().casefold()
+        for m in supplied_history
+        if isinstance(m, dict)
+    }
+    extra_supabase = [
+        m for m in supabase_messages
+        if isinstance(m, dict)
+        and str((m.get("result") or {}).get("original_query", "")).strip().casefold()
+        not in supplied_queries
+    ]
+    chat_messages = supplied_history + extra_supabase
+
     previous_queries = extract_chat_queries(chat_messages)
     if not previous_queries and isinstance(cache_record, dict):
         source_query = str(cache_record.get("source_query", "")).strip()

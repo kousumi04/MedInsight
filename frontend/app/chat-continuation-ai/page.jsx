@@ -193,6 +193,14 @@ export default function ChatContinuationPage() {
     setIsSubmitting(true);
 
     try {
+      // Send the last ≤5 turns directly so the backend has conversation
+      // context without relying on a Supabase read succeeding first.
+      const historySnapshot = messages.slice(-5).flatMap((message) => {
+        const q = message?.result?.original_query;
+        const a = message?.result?.answer;
+        return q && a ? [{ query: q, answer: a }] : [];
+      });
+
       const response = await fetch(`${API_BASE_URL}/query/ask`, {
         method: "POST",
         headers: {
@@ -201,6 +209,7 @@ export default function ChatContinuationPage() {
         body: JSON.stringify({
           query: normalizedPrompt,
           session_id: getChatSessionId(),
+          conversation_history: historySnapshot,
         }),
       });
 

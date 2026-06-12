@@ -95,6 +95,13 @@ class RetrievedChunk(BaseModel):
     distance: float | None = None
 
 
+class ConversationTurn(BaseModel):
+    """A single query/answer pair from the conversation history."""
+
+    query: str
+    answer: str
+
+
 class AskRequest(BaseModel):
     """Request body for end-to-end MedInsight answering."""
 
@@ -108,6 +115,11 @@ class AskRequest(BaseModel):
         ge=1,
         le=20,
         description="Maximum number of PubMed papers to fetch before RAG.",
+    )
+    conversation_history: list[ConversationTurn] = Field(
+        default_factory=list,
+        description="Last N query/answer turns sent by the frontend for context. "
+                    "Replaces the Supabase read for conversation memory.",
     )
 
 
@@ -185,11 +197,19 @@ def search_pubmed_papers(request: PubMedSearchRequest) -> dict[str, object]:
 def ask_medinsight(request: AskRequest) -> dict[str, object]:
     """Run the LangChain query -> PubMed -> RAG -> answer pipeline."""
 
+    # Convert the frontend-supplied conversation turns into the internal
+    # message format so the pipeline can use them without a Supabase read.
+    conversation_history = [
+        {"result": {"original_query": turn.query, "answer": turn.answer}}
+        for turn in (request.conversation_history or [])
+    ]
+
     try:
         result = run_medinsight_chain(
             request.query,
             request.max_results,
             session_id=request.session_id,
+            conversation_history=conversation_history,
         )
         return _ensure_answer_fallback(request.query, result)
     except ValueError as exc:
