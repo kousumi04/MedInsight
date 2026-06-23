@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600&family=Libre+Caslon+Text:wght@400;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap");
 
 @tailwind base;
@@ -6,10 +7,27 @@
 @tailwind utilities;
 
 body {
-  background-color: #0a0a0a;
-  color: #e5e2e1;
+  background-color: #fdfcfb;
+  color: #151311;
   font-family: "Inter", sans-serif;
-  overflow: hidden;
+  overflow-x: hidden;
+}
+
+.font-serif-title {
+  font-family: "Libre Caslon Text", Georgia, serif;
+}
+
+.font-sans-ui {
+  font-family: "Hanken Grotesk", Inter, sans-serif;
+}
+
+.medinsight-paper-pattern {
+  background:
+    linear-gradient(120deg, rgba(135, 206, 235, 0.14), transparent 38%),
+    radial-gradient(circle at 18px 18px, rgba(21, 19, 17, 0.08) 1px, transparent 1.5px),
+    radial-gradient(circle at 42px 42px, rgba(135, 206, 235, 0.16) 1px, transparent 1.5px);
+  background-size: auto, 48px 48px, 48px 48px;
+  opacity: 0.45;
 }
 
 .custom-scrollbar::-webkit-scrollbar {

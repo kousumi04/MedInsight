@@ -36,7 +36,7 @@ function parseInlineFormatting(text) {
     const token = match[0];
     if (token.startsWith("**")) {
       parts.push(
-        <strong key={`${match.index}-strong`} className="font-semibold text-on-surface">
+        <strong key={`${match.index}-strong`} className="font-semibold text-black">
           {token.slice(2, -2)}
         </strong>,
       );
@@ -107,10 +107,10 @@ function AnswerContent({ answer }) {
     if (block.type === "heading") {
       const headingClass =
         block.level <= 1
-          ? "mt-7 first:mt-0 font-headline-md text-headline-md text-primary"
+          ? "mt-7 first:mt-0 font-serif-title text-2xl text-black"
           : block.level === 2
-            ? "mt-6 font-headline-sm text-headline-sm text-on-surface"
-            : "mt-4 font-body-md text-body-md font-semibold text-on-surface";
+            ? "mt-6 font-sans-ui text-lg font-semibold text-indigo-700"
+            : "mt-4 font-sans-ui text-base font-semibold text-indigo-700";
 
       return (
         <h2 key={`${block.text}-${index}`} className={headingClass}>
@@ -239,31 +239,16 @@ export default function ChatContinuationPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-on-background">
-      <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-outline-variant bg-background px-margin-mobile md:px-margin-desktop">
+    <div className="flex h-screen flex-col overflow-hidden bg-[#fdfcfb] text-[#151311]">
+      <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-[#cec5bd]/50 bg-[#faf9f8] px-margin-mobile md:px-margin-desktop">
         <div className="flex items-center gap-8">
-          <Link className="font-headline-md text-headline-md font-bold tracking-normal text-primary" href="/">
+          <Link className="font-serif-title text-2xl font-bold tracking-normal text-black" href="/">
             MedInsight
           </Link>
-          <nav className="hidden items-center gap-6 md:flex">
-            {["Dashboard", "Research", "Archive", "Insights"].map((item, index) => (
-              <a
-                key={item}
-                className={`font-body-md text-body-md transition-colors ${
-                  index === 0
-                    ? "border-b-2 border-primary pb-1 text-primary"
-                    : "text-on-surface-variant hover:text-primary"
-                }`}
-                href="#"
-              >
-                {item}
-              </a>
-            ))}
-          </nav>
         </div>
         <div className="flex items-center gap-4">
           <Link
-            className="rounded bg-primary-container px-4 py-2 font-label-caps text-label-caps uppercase tracking-widest text-on-primary-container duration-100 active:scale-95"
+            className="rounded bg-[#87ceeb] px-4 py-2 font-sans-ui text-xs font-semibold uppercase tracking-widest text-[#151311] duration-100 hover:opacity-80 active:scale-95"
             href="/"
           >
             New Search
@@ -283,11 +268,11 @@ export default function ChatContinuationPage() {
         </main>
       </div>
 
-      <div className="pointer-events-none fixed bottom-0 left-0 w-full bg-gradient-to-t from-background via-background/90 to-transparent p-6 md:p-8">
+      <div className="pointer-events-none fixed bottom-0 left-0 w-full bg-gradient-to-t from-[#fdfcfb] via-[#fdfcfb]/95 to-transparent p-6 md:p-8">
         <form className="pointer-events-auto mx-auto max-w-[800px]" onSubmit={submitPrompt}>
-          <div className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container p-2 shadow-2xl transition-all focus-within:border-primary-container">
+          <div className="flex items-center gap-2 rounded-full border border-[#87ceeb] bg-[#f5f3f0] p-2 shadow-lg transition-all focus-within:ring-1 focus-within:ring-[#87ceeb]">
             <input
-              className="min-w-0 flex-grow border-none bg-transparent px-2 py-3 font-body-md text-on-surface placeholder:text-on-surface-variant/40 focus:ring-0"
+              className="min-w-0 flex-grow border-none bg-transparent px-4 py-3 font-sans-ui text-[#151311] placeholder:text-[#4c4640]/60 focus:ring-0"
               disabled={isSubmitting}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={submitOnEnter}
@@ -297,7 +282,7 @@ export default function ChatContinuationPage() {
             />
             <button
               aria-label="Send follow-up"
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primary-container text-2xl font-semibold leading-none text-on-primary-container transition-all hover:brightness-110 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#87ceeb] text-2xl font-semibold leading-none text-[#151311] transition-all hover:opacity-80 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!prompt.trim() || isSubmitting}
               type="submit"
             >
@@ -306,10 +291,10 @@ export default function ChatContinuationPage() {
               </span>
             </button>
           </div>
-          {error ? <p className="mt-3 text-center text-body-sm text-error">{error}</p> : null}
+          {error ? <p className="mt-3 text-center text-body-sm text-[#ba1a1a]">{error}</p> : null}
           {isSubmitting ? (
             <div className="mt-4 flex justify-center" aria-label="Loading">
-              <div className="h-7 w-7 animate-spin rounded-full border-2 border-outline-variant border-t-primary" />
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-[#cec5bd] border-t-[#87ceeb]" />
             </div>
           ) : null}
         </form>
@@ -320,12 +305,12 @@ export default function ChatContinuationPage() {
 
 function ChatTurn({ result }) {
   return (
-    <section className="flex flex-col gap-6 border-b border-outline-variant pb-12 last:border-b-0">
-      <h1 className="font-headline-md text-headline-md tracking-normal text-on-surface">
+    <section className="flex flex-col gap-6 border-b border-[#cec5bd]/60 pb-12 last:border-b-0">
+      <h1 className="font-serif-title text-3xl tracking-normal text-black">
         {result.original_query}
       </h1>
 
-      <article className="space-y-4 font-body-md text-body-md leading-relaxed text-on-surface">
+      <article className="space-y-4 font-sans-ui text-base leading-relaxed text-[#151311]">
         <AnswerContent answer={result.answer} />
       </article>
     </section>
