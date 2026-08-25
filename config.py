@@ -90,7 +90,7 @@ GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-flash")
 MAX_KEYWORDS = _get_int_env("MAX_KEYWORDS", 8)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.1-8b-instant")
+GROQ_MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "openai/gpt-oss-120b")
 GROQ_GENERATION_CONFIG = {
     "temperature": 0.2,
     "top_p": 0.8,
