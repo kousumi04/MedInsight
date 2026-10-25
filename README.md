@@ -20,6 +20,125 @@ MedInsight is a clinical-literature research assistant. A Next.js interface acce
 - Reuses a recent session’s evidence context for related follow-up questions to avoid unnecessary searches.
 - Stores browser chat history in session storage and can persist chat history/cache data in Supabase.
 
+## Functionalities used
+
+| Functionality | How it works in MedInsight | Why it is useful |
+| --- | --- | --- |
+| Clinical-query interface | The Next.js landing page accepts a free-text research question and opens a dedicated continuation chat after the first answer. | Gives users a simple research-first workflow rather than exposing raw search parameters. |
+| Input validation | FastAPI/Pydantic requires a non-empty `query`, validates `max_results` between 1 and 20, and returns a `400` response for invalid input. | Stops malformed requests before external APIs or models are called. |
+| Keyword extraction | Gemini is prompted to return a small JSON list of medical concepts; the result is normalized, deduplicated, stripped of generic phrases, and limited to eight terms. | Turns conversational language into focused terms that PubMed can search effectively. |
+| Offline keyword fallback | If Gemini, its key, or its JSON response is unavailable, a local regex-based extractor keeps useful phrases and removes common filler words. | The literature-search workflow still works when the keyword model is unavailable. |
+| PubMed retrieval | Biopython’s NCBI Entrez client searches PubMed by relevance, then fetches article metadata and abstracts. | Brings current, structured biomedical literature into the workflow. |
+| Evidence quality filtering | Records without a PMID, title, or abstract are removed, as are comments, editorials, letters, news, and newspaper articles. | Reduces low-value or non-research material before RAG ingestion. |
+| PMC enrichment | When an article has a PMCID, the backend fetches open-access PMC XML and extracts meaningful body paragraphs. | RAG can use fuller evidence than an abstract when it is legally/publicly available. |
+| Vector retrieval | Article text is chunked, embedded, stored in Chroma, and searched using similarity search. | Selects the small amount of evidence most relevant to the actual question. |
+| Grounded answer synthesis | Groq receives the question plus retrieved chunks, titles, and PubMed URLs, with instructions to use only supplied context. | Produces readable research summaries while reducing unsupported claims. |
+| Follow-up chat | The frontend sends up to five recent question/answer pairs with each follow-up; the backend also reads stored history when configured. | Lets requests such as “summarize that” retain the prior topic. |
+| Topic-aware caching | A session cache stores the source query, vector, keywords, papers, and retrieved chunks for a configurable TTL. Topic overlap, similarity, and a topic-shift check decide whether it can be reused. | Makes relevant follow-ups faster and avoids repeating PubMed and embedding work. |
+| Resilient storage | Chat history falls back to browser `sessionStorage`; RAG cache persistence falls back to in-process memory when Supabase is unavailable. | The core experience degrades gracefully rather than failing because optional persistence is offline. |
+
+## Core concepts
+
+### Retrieval-augmented generation (RAG)
+
+An LLM can write fluent answers, but its built-in knowledge does not automatically contain the specific articles returned for a user’s question. RAG supplies relevant external text to the model at answer time. In this project, PubMed and PMC are the evidence source, Chroma finds the closest passages, and Groq writes an answer from those passages.
+
+RAG has two distinct jobs:
+
+1. **Retrieval** finds evidence: retrieve articles, split them into chunks, convert chunks and the user query to numerical vectors, then choose the nearest chunks.
+2. **Generation** explains evidence: give the model the user’s question and only those retrieved chunks, then instruct it to synthesize rather than invent information.
+
+This separation matters because literature retrieval can be refreshed independently of the answer model, and the response can be traced back to the selected paper metadata and PubMed URLs.
+
+### Keywords and search queries
+
+Keywords are concise medical concepts, such as a condition, therapy, biomarker, or outcome. They are not the final answer. MedInsight uses them to construct a PubMed expression where the first keyword is the primary concept and later keywords are alternatives. It also requires abstracts and boosts common research publication types. For example, the terms `GLP-1 agonists`, `obesity`, and `diabetes` become a primary-treatment term combined with an obesity/diabetes group, instead of a broad natural-language search.
+
+### Chunks
+
+A chunk is the smallest retrievable unit of evidence. MedInsight makes one chunk per useful PMC paragraph. If an open-access full text is not available, it splits a structured PubMed abstract into labelled sections where possible, otherwise it uses the abstract as one chunk. Every chunk retains metadata including article title, PMID/PMCID, journal, DOI, source URLs, paper rank, and whether its text came from PMC full text or a PubMed abstract.
+
+### Embeddings and similarity search
+
+An embedding is a list of numbers representing text for comparison. MedInsight embeds documents as `retrieval_document` and questions as `retrieval_query`, then Chroma performs a similarity search to identify relevant chunks.
+
+By default, the project uses a deterministic, normalized 384-dimension hashing vector based on text tokens. It is local, free, and reliable as an offline fallback, but it is primarily lexical and is less semantically capable than a trained biomedical embedding model. With `USE_GEMINI_EMBEDDINGS=true`, the application requests Gemini embeddings instead; if that call fails, it automatically returns to the local embedding implementation.
+
+### Grounding, provenance, and fallback answers
+
+For answers with retrieved chunks, the prompt tells Groq to use only the supplied PubMed context and not to invent citations, statistics, studies, or clinical facts. The prompt includes each chunk’s paper title and PubMed URL, preserving source provenance in the model context.
+
+If no chunks are retrieved, MedInsight switches to a separate fallback prompt that asks for well-established medical knowledge, requires disclosure that retrieval did not produce relevant context, and prohibits fabricated citations. This is a helpful continuity mechanism, but it is not a retrieved-evidence answer and should be interpreted accordingly.
+
+### Cache, session, and topic shift
+
+A **session** identifies a browser chat. A **cache record** stores the latest successful retrieval context for that session: its source question, embedding, keywords, topic terms, PubMed query, papers, and retrieved chunks. The default cache lifetime is three hours.
+
+Before a follow-up causes a new search, the backend checks whether the cache is fresh and whether the new question is about the same topic. It uses meaningful term overlap, vector cosine similarity, keyword overlap, follow-up wording, and—when Gemini is available—a JSON topic-shift classification. A related question can reuse the prior evidence; a question that changes disease, therapy, drug class, organ system, or research area starts a new retrieval flow.
+
+## How RAG is implemented
+
+The end-to-end RAG orchestration lives in `backend/rag/langchain_pipeline.py`. It builds a LangChain sequence of four stages: prepare context, retrieve PubMed evidence, refresh/retrieve vectors, and generate an answer.
+
+```mermaid
+flowchart TD
+    Q[User question] --> C{Fresh, related session cache?}
+    C -->|Yes| CC[Reuse cached papers and chunks]
+    C -->|No| K[Extract and clean keywords]
+    K --> S[Build PubMed query]
+    S --> P[Retrieve and filter PubMed records]
+    P --> M[Fetch eligible PMC full text]
+    M --> H[Chunk top 5 papers]
+    H --> E[Embed up to 100 chunks]
+    E --> V[Replace temporary Chroma collection]
+    V --> R[Retrieve top 3 matching chunks]
+    CC --> G[Generate answer]
+    R --> G
+    G --> A[Structured API response]
+```
+
+### 1. Prepare context and decide whether to reuse evidence
+
+`run_medinsight_chain()` first merges the history supplied by the browser with any Supabase chat history, removing duplicate questions. For a session with a fresh cache, it asks whether the new request remains on the same topic. If it does, the pipeline bypasses keyword extraction, PubMed, and Chroma retrieval and uses the saved chunks. If it does not, or if no valid cache exists, the pipeline starts a new search.
+
+This is evidence-context reuse, not answer reuse: the model still generates a new answer for the user’s new wording. If a related follow-up has no chunks but there is prior chat text, the project instead uses the most recent answer as tightly constrained conversation context—for example, to reformat it as bullets.
+
+### 2. Retrieve source literature
+
+For fresh requests, `process_user_query()` runs Gemini keyword extraction and cleaning. `build_pubmed_query()` builds a quoted query with an abstract requirement and a publication-type group. `fetch_pubmed_papers()` requests a relevance-ordered candidate list, fetches article details, filters unsuitable records, and limits the final set to the requested maximum (10 by default).
+
+The backend then attempts to enrich papers that have a PMCID by downloading PMC XML and retaining useful body paragraphs. Articles without accessible PMC text are still valuable: their abstracts become the fallback source for chunking.
+
+### 3. Build document chunks and vectors
+
+`chunk_pubmed_papers()` considers the first five retrieved papers for RAG. It prefers their full-text PMC paragraphs and otherwise uses abstract sections. Each resulting chunk gets a stable ID such as `pubmed-<pmid>-chunk-<number>` plus source metadata.
+
+`refresh_pubmed_collection()` clears the configured temporary Chroma collection before writing a fresh query’s material. It passes at most `MAX_STORED_CHUNKS` chunks (100 by default) to LangChain’s Chroma store. During indexing, document chunks are embedded; during search, the user’s question is embedded using the query task type.
+
+### 4. Retrieve the most relevant evidence
+
+`retrieve_similar_chunks()` performs Chroma similarity search with `top_k=3`. The returned objects include the chunk text, metadata, stable ID, and similarity score/distance returned by Chroma. These are emitted in the `/query/ask` response as `retrieved_chunks`, which makes the evidence selected by the pipeline inspectable by the client.
+
+The vector collection is intentionally temporary: a new fresh search replaces the previous collection. The durable, per-session layer is the optional Supabase cache, which preserves only the chunks selected for that session’s answer. In a shared deployment, separate collection names or stronger tenant isolation are needed if simultaneous users must never share a temporary vector collection.
+
+### 5. Generate a grounded response
+
+`generate_answer()` serializes the three retrieved chunks into a prompt containing the question, article title, PubMed URL, and chunk text. Its primary prompt says to rely only on that context, explain uncertainty naturally, avoid fabricated citations, and choose a readable structure appropriate to the question.
+
+When retrieval is empty, `_ensure_answer_fallback()` and `generate_answer()` route to a fallback prompt rather than pretending that a literature-grounded answer exists. If Groq cannot generate a response, the API returns an error instead of silently manufacturing output.
+
+### RAG design choices and trade-offs
+
+| Choice | Benefit | Trade-off |
+| --- | --- | --- |
+| PubMed/PMC as sources | Focuses the system on biomedical literature and preserves article identifiers/URLs. | Not every article has accessible full text; retrieval coverage depends on NCBI availability. |
+| Paragraph-level chunks | Lets the retriever select precise passages instead of whole papers. | Context can omit information from other parts of a study. |
+| Top five papers indexed, top three chunks generated | Keeps latency and prompt size manageable. | Important evidence outside those limits can be missed. |
+| Temporary Chroma refresh | Prevents stale documents from accumulating in the active collection. | A shared collection needs isolation for concurrent multi-user production use. |
+| Local hash embeddings by default | Enables local/offline execution without another paid model dependency. | It is weaker at meaning-based retrieval than trained embeddings. |
+| Cached related follow-ups | Faster and less expensive multi-turn chat. | A weak topic-shift decision can reuse context that is too broad or too narrow. |
+| Fallback knowledge mode | Gives the user a useful reply when retrieval fails. | It is not evidence-grounded in the current PubMed result and must be labelled as such. |
+
 ## Architecture
 
 ```mermaid
